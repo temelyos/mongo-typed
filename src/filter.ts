@@ -4,17 +4,16 @@ import { Expr } from './expr.js';
 import { GeoJson, GeoJsonMultiPolygon, GeoJsonPoint, GeoJsonPolygon } from './geo-json.js';
 import { DeepPartialButId, Identifiable } from './identifiable.js';
 import { JsonSchema } from './json-schema/index.js';
-import { And, DeepPartial } from './types.js';
+import { DeepPartial } from './types.js';
 
 export declare type AlternativeTypes<T, TPartial extends boolean = false> =
 	T extends string
 		? RegExp | T
-		: And<
-			T extends object ? true : false,
-			TPartial,
-			T extends Identifiable ? DeepPartialButId<T> : DeepPartial<T>,
-			T
-		>;
+		: T extends object
+			? TPartial extends true
+				? T extends Identifiable ? DeepPartialButId<T> : DeepPartial<T>
+				: T
+			: T;
 
 export declare type BitwiseFilter = number /** BinData bit mask */ | ReadonlyArray<number>;
 

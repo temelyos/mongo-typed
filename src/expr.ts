@@ -183,8 +183,22 @@ export type NumericExpr<TInput extends object> =
 	| { $week: DateExpr<TInput> | DateTimezoneExpr<TInput> }
 	| { $year: DateExpr<TInput> | DateTimezoneExpr<TInput> };
 
-/** @internal Wildcard-widened numeric field ref — preserves autocomplete for numeric paths inside {@link NumericExpr} while keeping generic variance. */
-type NumericFieldRef<TInput extends object> = (`$${string}` & {}) | `$${TypedPaths<TInput, number>}`;
+/**
+ * @internal Numeric field reference inside {@link NumericExpr} (e.g. `{ $abs: '$price' }`).
+ *
+ * Type safety is UNCHANGED vs. the previous `` (`$${string}` & {}) | `$${TypedPaths<TInput, number>}` ``:
+ * both forms include the `` (`$${string}` & {}) `` catch-all arm, so the accepted/rejected value set is
+ * identical — any `` `$${string}` `` was (and still is) accepted; numeric-typing of the ref was never enforced.
+ *
+ * Using {@link FieldRef} (path enumeration only) instead of {@link TypedPaths} (per-path value re-walk to
+ * filter for `number`) removes ~328K type instantiations — `Expr` is checked on every `ObjFilter` relate, so
+ * this dominated filter-type-check cost. See `npm run type-perf`.
+ *
+ * TRADE-OFF: editor AUTOCOMPLETE now suggests all field paths here, not only numeric-typed ones. This is a
+ * suggestion-only change, not a type-checking change. To restore numeric-only suggestions, revert to
+ * `` (`$${string}` & {}) | `$${TypedPaths<TInput, number>}` `` — but that reinstates the ~328K cost.
+ */
+type NumericFieldRef<TInput extends object> = FieldRef<TInput>;
 
 export type ObjectExpr<TInput extends object> =
 	| { $getField: StringExpr<TInput> | { field: StringExpr<TInput>, input?: Expr<TInput> } }

@@ -1,7 +1,5 @@
 /** Dot notation that includes numeric array indices and properly maps for use in object keys */
 
-import { And } from './types.js';
-
 // DotNotation: Supports $ (if enabled), object keys, and arrays
 export type DotNotation<
 	T extends object,
@@ -15,37 +13,22 @@ export type DotNotation<
 		: T extends readonly (infer U)[]
 			? (
 				| `${TPrefix}${number}`
-				| (NonNullable<U> extends object
-					? IsVisited<NonNullable<U>, TVisited> extends true
+				| (NonNullable<U> extends infer EU extends object
+					? IsVisited<EU, TVisited> extends true
 						? never
-						: DotNotation<NonNullable<U>, TAllowPlaceholder, `${TPrefix}${number}.`, [...TDepth, 1], [...TVisited, NonNullable<U>]>
+						: (
+							| DotNotation<EU, TAllowPlaceholder, `${TPrefix}${number}.`, [...TDepth, 1], [...TVisited, EU]>
+							| DotNotation<EU, TAllowPlaceholder, `${TPrefix}`, [...TDepth, 1], [...TVisited, EU]>
+							| (TAllowPlaceholder extends true
+								? (
+									| DotNotation<EU, TAllowPlaceholder, `${TPrefix}$.`, [...TDepth, 1], [...TVisited, EU]>
+									| DotNotation<EU, TAllowPlaceholder, `${TPrefix}$[${string}].`, [...TDepth, 1], [...TVisited, EU]>
+									| DotNotation<EU, TAllowPlaceholder, `${TPrefix}$[].`, [...TDepth, 1], [...TVisited, EU]>
+								)
+								: never)
+						)
 					: never)
-				| (NonNullable<U> extends object
-					? IsVisited<NonNullable<U>, TVisited> extends true
-						? never
-						: DotNotation<NonNullable<U>, TAllowPlaceholder, `${TPrefix}`, [...TDepth, 1], [...TVisited, NonNullable<U>]>
-					: never)
-				| (TAllowPlaceholder extends true
-					? (
-						| `${TPrefix}$[${string}]`
-						| `${TPrefix}$`
-						| (NonNullable<U> extends object
-							? IsVisited<NonNullable<U>, TVisited> extends true
-								? never
-								: DotNotation<NonNullable<U>, TAllowPlaceholder, `${TPrefix}$.`, [...TDepth, 1], [...TVisited, NonNullable<U>]>
-							: never)
-						| (NonNullable<U> extends object
-							? IsVisited<NonNullable<U>, TVisited> extends true
-								? never
-								: DotNotation<NonNullable<U>, TAllowPlaceholder, `${TPrefix}$[${string}].`, [...TDepth, 1], [...TVisited, NonNullable<U>]>
-							: never)
-						| (NonNullable<U> extends object
-							? IsVisited<NonNullable<U>, TVisited> extends true
-								? never
-								: DotNotation<NonNullable<U>, TAllowPlaceholder, `${TPrefix}$[].`, [...TDepth, 1], [...TVisited, NonNullable<U>]>
-							: never)
-					)
-					: never)
+				| (TAllowPlaceholder extends true ? `${TPrefix}$[${string}]` | `${TPrefix}$` : never)
 			)
 			: {
 				[K in keyof T & string]:
@@ -53,10 +36,10 @@ export type DotNotation<
 					? never
 					: (
 						| `${TPrefix}${K}`
-						| (NonNullable<T[K]> extends object
-							? IsVisited<NonNullable<T[K]>, TVisited> extends true
+						| (NonNullable<T[K]> extends infer V extends object
+							? IsVisited<V, TVisited> extends true
 								? never
-								: DotNotation<NonNullable<T[K]>, TAllowPlaceholder, `${TPrefix}${K}.`, [...TDepth, 1], [...TVisited, NonNullable<T[K]>]>
+								: DotNotation<V, TAllowPlaceholder, `${TPrefix}${K}.`, [...TDepth, 1], [...TVisited, V]>
 							: never)
 					)
 			}[keyof T & string];
@@ -82,23 +65,21 @@ export type DotPathValue<
 							? DotPathValue<U, Rest, TAllowPlaceholder, TCheckInArray, true, [...TDepth, 1]>
 							: never
 						: never
-				: Key extends string
-					? T extends unknown
-						? Key extends keyof T
-							? DotPathValue<NonNullable<T[Key]>, Rest, TAllowPlaceholder, TCheckInArray, TIsInArray, [...TDepth, 1]>
-							: T extends object
-								? T[keyof T] extends infer V
-									? V extends object
-										? DotPathValue<V, Rest, TAllowPlaceholder, TCheckInArray, TIsInArray, [...TDepth, 1]>
-										: never
+				: T extends unknown
+					? Key extends keyof T
+						? DotPathValue<NonNullable<T[Key]>, Rest, TAllowPlaceholder, TCheckInArray, TIsInArray, [...TDepth, 1]>
+						: T extends object
+							? T[keyof T] extends infer V
+								? V extends object
+									? DotPathValue<V, Rest, TAllowPlaceholder, TCheckInArray, TIsInArray, [...TDepth, 1]>
 									: never
 								: never
-						: never
+							: never
 					: never
 			: T extends readonly (infer U)[]
 				? U extends unknown
 					? TPath extends `${number}`
-						? And<TIsInArray, TCheckInArray, U[], U>
+						? TIsInArray extends true ? TCheckInArray extends true ? U[] : U : U
 						: TAllowPlaceholder extends true
 							? TPath extends `$[${string}]` | `$[]` | `$`
 								? TCheckInArray extends true ? U[] : U
@@ -111,7 +92,7 @@ export type DotPathValue<
 					: never
 				: T extends unknown
 					? TPath extends keyof T
-						? And<TIsInArray, TCheckInArray, T[TPath][], T[TPath]>
+						? TIsInArray extends true ? TCheckInArray extends true ? T[TPath][] : T[TPath] : T[TPath]
 						: never
 					: never;
 

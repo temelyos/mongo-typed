@@ -6,7 +6,7 @@
 	"license": "MIT",
 	"repository": {
     "type": "git",
-    "url": "git+https://github.com/secure-data-systems/mongo-typed.git"
+    "url": "git+https://github.com/temelyos/mongo-typed.git"
   },
 	"type": "module",
 	"main": "dist/index.js",

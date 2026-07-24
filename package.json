@@ -1,6 +1,6 @@
 {
 	"name": "mongo-typed",
-	"version": "1.5.5",
+	"version": "1.5.6",
 	"description": "Provides type-safe MongoDB-style query and update utilities in TypeScript. It is designed to assist with building fully-typed data repository layers or services that interact with MongoDB-like syntax, without relying on external libraries or runtime packages.",
 	"author": "SecureDataSystems",
 	"license": "MIT",

@@ -5,7 +5,7 @@ import { NumericType } from './bson-types.js';
 import { DotNotation, DotPathValue, OnlyFieldsOfTypeDotNotation } from './dot-notation.js';
 import { Filter } from './filter.js';
 import { Assert, Equals } from './types.js';
-import { Update } from './update.js';
+import { ArrayFilter, Update } from './update.js';
 
 interface Role {
 	id: string,
@@ -146,5 +146,56 @@ describe('Update', () => {
 		}>;
 
 		type T1 = Assert<Equals<Expected | undefined, T>>;
+	});
+});
+
+describe('ArrayFilter', () => {
+	interface Template {
+		_id: string,
+		name: string,
+		shifts?: {
+			day: number,
+			owner?: string,
+			tags?: { label: string }[]
+		}[]
+	}
+
+	it('should key by <name>.<path> for fields inside array elements', () => {
+		type T = keyof ArrayFilter<Template>;
+
+		type Expected =
+			| `${string}.day`
+			| `${string}.label`
+			| `${string}.owner`
+			| `${string}.tags.${number}.label`
+			| `${string}.tags.${number}`
+			| `${string}.tags.label`
+			| `${string}.tags`;
+
+		type T1 = Assert<Equals<Expected, T>>;
+	});
+
+	it('should allow conditions on array element fields', () => {
+		const byOwner: ArrayFilter<Template> = { 'el.owner': 'abc' };
+		const byDay: ArrayFilter<Template> = { 'el.day': { $gte: 1 } };
+		const byNestedLabel: ArrayFilter<Template> = { 'tag.label': 'x' };
+		const filters: ArrayFilter<Template>[] = [byOwner, byDay, byNestedLabel];
+	});
+
+	it('should reject unknown fields, wrong value types and top-level fields', () => {
+		// @ts-expect-error 'nope' is not a field of a shifts element
+		const unknownField: ArrayFilter<Template> = { 'el.nope': 1 };
+		// @ts-expect-error 'day' is a number
+		const wrongType: ArrayFilter<Template> = { 'el.day': 'monday' };
+		// @ts-expect-error 'name' is a top-level field, not inside an array element
+		const topLevel: ArrayFilter<Template> = { 'el.name': 'x' };
+	});
+
+	it('should let an unconstrained generic through', () => {
+		function arrayFilters<T>(filters: ArrayFilter<T>[]): ArrayFilter<T>[] {
+			return filters;
+		}
+
+		const filters = arrayFilters<Template>([{ 'el.owner': 'abc' }]);
 	});
 });

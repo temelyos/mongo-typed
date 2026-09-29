@@ -1,9 +1,15 @@
 import { RewrapArray, UnwrapArray } from './array.js';
 import { IntegerType, NumericType } from './bson-types.js';
 import { DotNotation, DotPathValue, OnlyFieldsOfTypeDotNotation } from './dot-notation.js';
-import { Filter } from './filter.js';
+import { Condition, Filter } from './filter.js';
 import { Identifiable, PartialButId } from './identifiable.js';
 import { EnhancedOmit } from './types.js';
+
+export declare type ArrayFilter<T> = T extends object ? {
+	[P in DotNotation<T, true> as P extends `${string}.$[${string}].${infer Rest}`
+		? Rest extends `${string}$${string}` ? never : `${string}.${Rest}`
+		: never]?: Condition<DotPathValue<T, P, true>>
+} : never;
 
 export declare type FieldsAndValues<
 	TSchema extends object,

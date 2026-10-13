@@ -30,7 +30,7 @@
 		"lint": "eslint . --c eslint.config.mjs",
 		"lint:fix": "eslint . --c eslint.config.mjs --fix",
 		"prune": "node scripts/prune.mjs",
-    "test": "tsx --tsconfig ./tsconfig.build.json --test ./src/**/*.{spec,test}.ts ./test/**/*.{spec,test}.ts"
+    "test": "tsx --tsconfig ./tsconfig.build.json --test \"./src/**/*.{spec,test}.ts\" \"./test/**/*.{spec,test}.ts\""
 	},
 	"devDependencies": {
 		"@temelyos/eslint-config": "^1.0.38",

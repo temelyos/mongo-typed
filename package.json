@@ -22,6 +22,11 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
+		},
+		"./zod": {
+			"types": "./dist/zod/index.d.ts",
+			"import": "./dist/zod/index.js",
+			"default": "./dist/zod/index.js"
 		}
 	},
 	"scripts": {
@@ -32,12 +37,21 @@
 		"prune": "node scripts/prune.mjs",
     "test": "tsx --tsconfig ./tsconfig.build.json --test \"./src/**/*.{spec,test}.ts\" \"./test/**/*.{spec,test}.ts\""
 	},
+	"peerDependencies": {
+		"zod": "^4.1.0"
+	},
+	"peerDependenciesMeta": {
+		"zod": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
 		"@temelyos/eslint-config": "^1.0.38",
 		"@temelyos/tsconfig": "^1.0.6",
 		"@types/node": "^25.6.0",
 		"tsx": "^4.21.0",
 		"typescript": "npm:@typescript/typescript6@^6.0.2",
-		"typescript-native": "npm:typescript@^7.0.2"
+		"typescript-native": "npm:typescript@^7.0.2",
+		"zod": "^4.6.7"
 	}
 }

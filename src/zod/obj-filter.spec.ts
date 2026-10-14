@@ -185,6 +185,9 @@ describe('objFilter() with forbiddenFields', () => {
 			{ 'authorizations.hash': { $options: 'i', $regex: '^ab' } },
 			{ 'authorizations.0.hash': { $exists: true } },
 			{ authorizations: { $elemMatch: { hash: 'x' } } },
+			{ authorizations: { $all: [{ $elemMatch: { hash: { $regex: '^ab' } } }] } },
+			{ authorizations: { $not: { $elemMatch: { hash: 'x' } } } },
+			{ $or: [{ authorizations: { $elemMatch: { $and: [{ hash: 'x' }] } } }] },
 			{ $or: [{ 'config.password': { $ne: null } }] }
 		]) {
 			assert.deepEqual(refused(guarded, filter), ['Filter references a forbidden field.'], JSON.stringify(filter));
@@ -193,6 +196,8 @@ describe('objFilter() with forbiddenFields', () => {
 
 	it('refuses a forbidden field inside a parent compared whole', () => {
 		refused(guarded, { config: { password: 'x', theme: 't' } });
+		refused(guarded, { config: { $in: [{ password: 'x', theme: 't' }] } });
+		refused(guarded, { config: { $ne: { password: 'x', theme: 't' } } });
 		refused(guarded, { authorizations: [{ hash: 'x', service: 's' }] });
 	});
 

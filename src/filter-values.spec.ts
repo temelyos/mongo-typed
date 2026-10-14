@@ -86,6 +86,13 @@ describe('mapFilterValues()', () => {
 		assert.deepEqual(visits({ shifts: { $elemMatch: { $or: [{ owner: 'u' }] } } } as ObjFilter<Roster>), [['shifts.owner', '$eq', 'u']]);
 	});
 
+	it('maps an $elemMatch inside $all by the element’s full path', () => {
+		assert.deepEqual(visits({ shifts: { $all: [{ $elemMatch: { owner: 'u' } }, { $elemMatch: { startAt: { $gt: 1 } } }] } } as ObjFilter<Roster>), [
+			['shifts.owner', '$eq', 'u'],
+			['shifts.startAt', '$gt', 1]
+		]);
+	});
+
 	it('copies operators that take no field value', () => {
 		const filter = {
 			$comment: 'c',
@@ -120,6 +127,10 @@ describe('filterPaths()', () => {
 	it('names the fields under $elemMatch and $not by their full path, after the array', () => {
 		assert.deepEqual(filterPaths({ shifts: { $elemMatch: { $or: [{ owner: 'u' }], startAt: { $not: { $gt: 1 } } } } } as ObjFilter<Roster>), ['shifts', 'shifts.owner', 'shifts.startAt']);
 		assert.deepEqual(filterPaths<Roster>({ tags: { $elemMatch: { $in: ['a'] } } }), ['tags']);
+	});
+
+	it('names the fields of an $elemMatch inside $all', () => {
+		assert.deepEqual(filterPaths({ shifts: { $all: [{ $elemMatch: { owner: { $regex: '^u' } } }] } } as ObjFilter<Roster>), ['shifts', 'shifts.owner']);
 	});
 
 	it('does not name the keys of an embedded document compared whole', () => {

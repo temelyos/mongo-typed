@@ -18,15 +18,24 @@ const valueOperators = new Set<string>(['$eq', '$gt', '$gte', '$lt', '$lte', '$n
 type Mapper = (operand: FilterOperand) => unknown;
 type Plain = Record<string, unknown>;
 
+function collectElemMatchPaths(condition: unknown, path: string, paths: Set<string>): void {
+	if (!isPlainObject(condition)) return;
+	if (isOperatorObject(condition) && !Object.keys(condition).some(key => logicalOperators.has(key))) {
+		collectOperatorPaths(condition, path, paths);
+	} else {
+		collectPaths(condition, path, paths);
+	}
+}
+
 function collectOperatorPaths(operators: Plain, path: string, paths: Set<string>): void {
 	for (const [operator, operand] of Object.entries(operators)) {
 		if (operator === '$not' && isOperatorObject(operand)) {
 			collectOperatorPaths(operand, path, paths);
-		} else if (operator === '$elemMatch' && isPlainObject(operand)) {
-			if (isOperatorObject(operand) && !Object.keys(operand).some(key => logicalOperators.has(key))) {
-				collectOperatorPaths(operand, path, paths);
-			} else {
-				collectPaths(operand, path, paths);
+		} else if (operator === '$elemMatch') {
+			collectElemMatchPaths(operand, path, paths);
+		} else if (operator === '$all' && Array.isArray(operand)) {
+			for (const item of operand) {
+				if (isElemMatch(item)) collectElemMatchPaths(item['$elemMatch'], path, paths);
 			}
 		}
 	}
@@ -48,13 +57,18 @@ function collectPaths(filter: Plain, prefix: string, paths: Set<string>): void {
 
 /**
  * Every field path `filter` names, once each, whatever its operator takes: through logical
- * operators, `$not` and `$elemMatch` (by the element's full path). The keys inside an embedded
+ * operators, `$not` and `$elemMatch`, also inside `$all` (by the element's full path). The keys inside an embedded
  * document compared whole are its value, not paths, so they aren't listed.
  */
 export function filterPaths<T extends object>(filter: ObjFilter<T>): string[] {
 	const paths = new Set<string>();
 	collectPaths(filter as Plain, '', paths);
 	return [...paths];
+}
+
+/** An item of `$all` that matches an element by condition (`{ $all: [{ $elemMatch: … }] }`), not by value. */
+function isElemMatch(value: unknown): value is { $elemMatch: unknown } {
+	return isPlainObject(value) && Object.keys(value).length === 1 && '$elemMatch' in value;
 }
 
 function isOperatorObject(value: unknown): value is Plain {
@@ -102,7 +116,7 @@ function mapFilter(filter: Plain, prefix: string, map: Mapper): Plain {
 
 /**
  * A copy of `filter` with every field value replaced by `map`'s result. Logical operators,
- * `$not` and `$elemMatch` are walked; operands that aren't field values (`$exists`, `$size`,
+ * `$not` and `$elemMatch` (also inside `$all`) are walked; operands that aren't field values (`$exists`, `$size`,
  * `$regex`, `$type`, geo, `$expr`, `$text` and the like) are copied as they are.
  */
 export function mapFilterValues<T extends object>(filter: ObjFilter<T>, map: Mapper): ObjFilter<T> {
@@ -115,7 +129,9 @@ function mapOperators(operators: Plain, path: string, map: Mapper): Plain {
 		if (valueOperators.has(operator)) {
 			result[operator] = map({ operator: operator as FilterValueOperator, path, value: operand });
 		} else if (listOperators.has(operator)) {
-			const mapItem = (item: unknown) => map({ operator: operator as FilterValueOperator, path, value: item });
+			const mapItem = (item: unknown) => (operator === '$all' && isElemMatch(item)
+				? { $elemMatch: mapElemMatch(item.$elemMatch, path, map) }
+				: map({ operator: operator as FilterValueOperator, path, value: item }));
 			result[operator] = Array.isArray(operand) ? operand.map(mapItem) : mapItem(operand);
 		} else if (operator === '$not' && isOperatorObject(operand)) {
 			result[operator] = mapOperators(operand, path, map);

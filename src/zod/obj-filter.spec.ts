@@ -118,3 +118,101 @@ describe('objFilter()', () => {
 		type Input = Assert<Equals<z.input<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.input<typeof roster>>>>;
 	});
 });
+
+const account = z.object({
+	authorizations: z.array(z.object({ hash: z.string(), service: z.string() })),
+	config: z.object({ password: z.string(), theme: z.string() }),
+	name: z.string()
+});
+
+const guarded = objFilter(account, { forbiddenFields: ['authorizations.hash', 'config.password'], untrusted: true });
+
+function refused(schema: z.ZodType, filter: unknown): string[] {
+	const result = schema.safeParse(filter);
+	assert.equal(result.success, false);
+	return result.error!.issues.map(issue => issue.message);
+}
+
+describe('objFilter() with untrusted', () => {
+	it('refuses an operator that runs code or a pipeline, at any depth', () => {
+		for (const filter of [
+			{ $where: 'this.name' },
+			{ $or: [{ $expr: { $eq: ['$name', 'a'] } }] },
+			{ authorizations: { $elemMatch: { $function: {} } } },
+			{ name: { $not: { $jsonSchema: {} } } }
+		]) {
+			assert.deepEqual(refused(guarded, filter), ['Filter contains a forbidden operator or value.']);
+		}
+	});
+
+	it('refuses anything but plain data', () => {
+		class Probe {}
+		const sparse: unknown[] = [];
+		sparse[2] = 'a';
+
+		refused(guarded, { name: () => 'a' });
+		refused(guarded, { name: new Probe() });
+		refused(guarded, { name: new Map() });
+		refused(guarded, { name: { $in: sparse } });
+	});
+
+	it('refuses an object reached twice, and a cycle', () => {
+		const clause = { name: 'a' };
+		const cycle: Record<string, unknown> = { name: 'a' };
+		cycle['$and'] = [cycle];
+
+		refused(guarded, { $or: [clause, clause] });
+		refused(guarded, cycle);
+	});
+
+	it('accepts the same Date twice and equal objects built separately', () => {
+		const at = new Date('2026-10-01T00:00:00.000Z');
+		const schema = objFilter(roster, { untrusted: true });
+
+		assert.equal(schema.safeParse({ $or: [{ createdAt: at }, { reviewedAt: at }] }).success, true);
+		assert.equal(schema.safeParse({ $or: [{ name: 'a' }, { name: 'a' }] }).success, true);
+	});
+
+	it('leaves those operators to a trusted caller', () => {
+		assert.equal(objFilter(account).safeParse({ $expr: { $eq: ['$name', 'a'] } }).success, true);
+	});
+});
+
+describe('objFilter() with forbiddenFields', () => {
+	it('refuses a forbidden path however the filter names it', () => {
+		for (const filter of [
+			{ 'authorizations.hash': 'x' },
+			{ 'authorizations.hash': { $options: 'i', $regex: '^ab' } },
+			{ 'authorizations.0.hash': { $exists: true } },
+			{ authorizations: { $elemMatch: { hash: 'x' } } },
+			{ $or: [{ 'config.password': { $ne: null } }] }
+		]) {
+			assert.deepEqual(refused(guarded, filter), ['Filter references a forbidden field.'], JSON.stringify(filter));
+		}
+	});
+
+	it('refuses a forbidden field inside a parent compared whole', () => {
+		refused(guarded, { config: { password: 'x', theme: 't' } });
+		refused(guarded, { authorizations: [{ hash: 'x', service: 's' }] });
+	});
+
+	it('refuses what lies below a forbidden object', () => {
+		refused(objFilter(account, { forbiddenFields: ['config'] }), { 'config.theme': 'dark' });
+	});
+
+	it('names the forbidden path in the issue', () => {
+		const result = z.object({ where: guarded }).safeParse({ where: { 'authorizations.hash': 'x' } });
+
+		assert.deepEqual(result.error?.issues.map(issue => issue.path), [['where', 'authorizations', 'hash']]);
+	});
+
+	it('allows the fields beside a forbidden one, and its parent without a value', () => {
+		assert.equal(guarded.safeParse({ 'authorizations.service': 'google', 'config.theme': 'dark' }).success, true);
+		assert.equal(guarded.safeParse({ authorizations: { $exists: true, $size: 1 } }).success, true);
+	});
+
+	it('takes only paths of the model', () => {
+		// @ts-expect-error a misspelt path is not one of the model's
+		objFilter(account, { forbiddenFields: ['authorizations.hsah'] });
+	});
+});

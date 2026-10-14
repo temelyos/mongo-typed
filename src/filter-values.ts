@@ -18,6 +18,45 @@ const valueOperators = new Set<string>(['$eq', '$gt', '$gte', '$lt', '$lte', '$n
 type Mapper = (operand: FilterOperand) => unknown;
 type Plain = Record<string, unknown>;
 
+function collectOperatorPaths(operators: Plain, path: string, paths: Set<string>): void {
+	for (const [operator, operand] of Object.entries(operators)) {
+		if (operator === '$not' && isOperatorObject(operand)) {
+			collectOperatorPaths(operand, path, paths);
+		} else if (operator === '$elemMatch' && isPlainObject(operand)) {
+			if (isOperatorObject(operand) && !Object.keys(operand).some(key => logicalOperators.has(key))) {
+				collectOperatorPaths(operand, path, paths);
+			} else {
+				collectPaths(operand, path, paths);
+			}
+		}
+	}
+}
+
+function collectPaths(filter: Plain, prefix: string, paths: Set<string>): void {
+	for (const [key, value] of Object.entries(filter)) {
+		if (logicalOperators.has(key) && Array.isArray(value)) {
+			for (const clause of value) {
+				if (isPlainObject(clause)) collectPaths(clause, prefix, paths);
+			}
+		} else if (!key.startsWith('$')) {
+			const path = join(prefix, key);
+			paths.add(path);
+			if (isOperatorObject(value)) collectOperatorPaths(value, path, paths);
+		}
+	}
+}
+
+/**
+ * Every field path `filter` names, once each, whatever its operator takes: through logical
+ * operators, `$not` and `$elemMatch` (by the element's full path). The keys inside an embedded
+ * document compared whole are its value, not paths, so they aren't listed.
+ */
+export function filterPaths<T extends object>(filter: ObjFilter<T>): string[] {
+	const paths = new Set<string>();
+	collectPaths(filter as Plain, '', paths);
+	return [...paths];
+}
+
 function isOperatorObject(value: unknown): value is Plain {
 	if (!isPlainObject(value)) return false;
 	const keys = Object.keys(value);

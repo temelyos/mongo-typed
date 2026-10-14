@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { ObjFilter } from './filter.js';
 
-import { FilterOperand, mapFilterValues } from './filter-values.js';
+import { FilterOperand, filterPaths, mapFilterValues } from './filter-values.js';
 
 interface Roster {
 	_id: string,
@@ -105,5 +105,24 @@ describe('mapFilterValues()', () => {
 		mapFilterValues(filter, upper);
 
 		assert.deepEqual(filter, { $or: [{ name: 'a' }], _id: { $in: ['b'] } });
+	});
+});
+
+describe('filterPaths()', () => {
+	it('lists each field a filter names, including through logical operators', () => {
+		assert.deepEqual(filterPaths<Roster>({ $nor: [{ tags: 'c' }], $or: [{ name: 'a' }, { _id: { $in: ['b'] } }] }), ['tags', 'name', '_id']);
+	});
+
+	it('names a field whatever its operator takes, value or not', () => {
+		assert.deepEqual(filterPaths<Roster>({ name: { $options: 'i', $regex: '^a' }, tags: { $exists: true, $size: 1 } }), ['name', 'tags']);
+	});
+
+	it('names the fields under $elemMatch and $not by their full path, after the array', () => {
+		assert.deepEqual(filterPaths({ shifts: { $elemMatch: { $or: [{ owner: 'u' }], startAt: { $not: { $gt: 1 } } } } } as ObjFilter<Roster>), ['shifts', 'shifts.owner', 'shifts.startAt']);
+		assert.deepEqual(filterPaths<Roster>({ tags: { $elemMatch: { $in: ['a'] } } }), ['tags']);
+	});
+
+	it('does not name the keys of an embedded document compared whole', () => {
+		assert.deepEqual(filterPaths<Roster>({ owner: { _id: 'o', name: 'n' } }), ['owner']);
 	});
 });

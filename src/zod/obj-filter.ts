@@ -86,35 +86,49 @@ function convert(field: z.ZodType, value: unknown, direction: Direction): { erro
 
 function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issues, direction: Direction): ObjFilter<object> {
 	return mapFilterValues(filter, ({ path, value }) => {
-		if (value === null || value === undefined || value instanceof RegExp) return value;
-
 		const field = fieldAt(model, path);
-		if (!field) return value;
-
-		const one = (item: unknown) => {
-			const result = convert(field.element ?? field.schema, item, direction);
-			if (result.error) issues.push({ code: 'custom', input: item, message: result.error, path: path.split('.') });
-			return result.error ? item : result.value;
-		};
-
-		return field.element && Array.isArray(value) ? value.map(one) : one(value);
+		return field ? convertValue(field, value, path.split('.'), issues, direction) : value;
 	});
 }
 
-/** The schema at a dotted filter path, and its element's when the field is an array (a filter may name either). */
-function fieldAt(model: z.ZodType, path: string): undefined | { element?: z.ZodType, schema: z.ZodType } {
+/**
+ * `value` converted by `field`. An array field takes a whole array or one element. An embedded document
+ * compared whole has its codec and date leaves converted in place: Mongo matches a document by its exact
+ * keys and their order, so nothing is stripped or reordered the way a Zod object parse would.
+ */
+function convertValue(field: z.ZodType, value: unknown, path: string[], issues: Issues, direction: Direction): unknown {
+	if (value === null || value === undefined || value instanceof RegExp) return value;
+
+	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
+
+	if (def.type === 'array') {
+		const element = unwrap(def.element as z.ZodType);
+		return Array.isArray(value)
+			? value.map(item => convertValue(element, item, path, issues, direction))
+			: convertValue(element, value, path, issues, direction);
+	}
+
+	if ((def.type === 'object' || def.type === 'union') && typeof value === 'object' && [null, Object.prototype].includes(Object.getPrototypeOf(value))) {
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+			const schema = child(field, key);
+			return [key, schema ? convertValue(unwrap(schema), item, [...path, key], issues, direction) : item];
+		}));
+	}
+
+	const result = convert(field, value, direction);
+	if (result.error) issues.push({ code: 'custom', input: value, message: result.error, path });
+	return result.error ? value : result.value;
+}
+
+/** The schema at a dotted filter path. */
+function fieldAt(model: z.ZodType, path: string): undefined | z.ZodType {
 	let schema: undefined | z.ZodType = model;
 
 	for (const key of path.split('.')) {
 		schema = schema && child(schema, key);
 	}
 
-	if (!schema) return undefined;
-
-	const field = unwrap(schema);
-	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
-
-	return def.type === 'array' ? { element: unwrap(def.element as z.ZodType), schema: field } : { schema: field };
+	return schema && unwrap(schema);
 }
 
 /** Each path `filter` references at or below a forbidden one, including the keys of a value compared whole. */

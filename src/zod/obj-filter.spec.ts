@@ -22,7 +22,8 @@ const roster = z.object({
 	name: z.string().min(1),
 	owner: z.object({ _id: z.string(), name: z.string() }),
 	reviewedAt: z.date().optional(),
-	shifts: z.array(shift)
+	shifts: z.array(shift),
+	sub: z.object({ at: isoDate, checkedAt: z.date().optional(), label: z.string() }).optional()
 });
 
 const request = z.object({ where: objFilter(roster).optional() });
@@ -106,6 +107,45 @@ describe('objFilter()', () => {
 
 		assert.deepEqual(where, filter);
 		assert.deepEqual(Object.keys(where!.owner as object), ['name', '_id']);
+	});
+
+	it('round-trips the dates inside an embedded document compared whole', () => {
+		const sub = { at: oct1, checkedAt: oct8, label: 'a' };
+
+		for (const where of [{ sub }, { sub: { $eq: sub } }, { sub: { $in: [sub] } }, { sub: { $ne: sub } }, { sub: { $nin: [sub] } }] as ObjFilter<z.output<typeof roster>>[]) {
+			assert.deepEqual(request.parse(overJson(z.encode(request, { where }))), { where }, JSON.stringify(where));
+		}
+	});
+
+	it('round-trips the dates inside an array of documents compared whole', () => {
+		const shifts = [{ owner: 'u', startAt: oct1 }];
+
+		for (const where of [{ shifts }, { shifts: { $in: [shifts] } }, { shifts: { $all: shifts } }, { shifts: shifts[0] }] as ObjFilter<z.output<typeof roster>>[]) {
+			assert.deepEqual(request.parse(overJson(z.encode(request, { where }))), { where }, JSON.stringify(where));
+		}
+	});
+
+	it('keeps an embedded document\'s keys and their order, unknown ones too', () => {
+		const sub = Object.fromEntries([['label', 'a'], ['extra', 'x'], ['at', oct1]]);
+		const encoded = z.encode(request, { where: { sub } as never });
+		const { where } = request.parse(overJson(encoded));
+
+		assert.deepEqual(Object.keys((encoded.where as { sub: object }).sub), ['label', 'extra', 'at']);
+		assert.deepEqual(where, { sub });
+		assert.deepEqual(Object.keys(where!.sub as object), ['label', 'extra', 'at']);
+	});
+
+	it('leaves a string inside an embedded document that only looks like a date', () => {
+		const iso = '2026-10-01T00:00:00.000Z';
+		const { where } = request.parse({ where: { sub: { at: iso, extra: iso, label: iso } } });
+
+		assert.deepEqual(where, { sub: { at: oct1, extra: iso, label: iso } });
+	});
+
+	it('rejects a date inside an embedded document that its field cannot decode, naming the field', () => {
+		const result = request.safeParse({ where: { sub: { at: 'not a date', label: 'a' } } });
+
+		assert.deepEqual(result.error?.issues.map(issue => issue.path), [['where', 'sub', 'at']]);
 	});
 
 	it('refuses a where that is not an object', () => {

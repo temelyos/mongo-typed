@@ -1,9 +1,10 @@
 import { DotNotation } from '../dot-notation.js';
-import { Expr, FieldRef, InferExprType } from '../expr.js';
+import { Expr, ExprOrDocument, FieldRef, InferExprType } from '../expr.js';
 import { Filter } from '../filter.js';
 import {
-	AddFieldsOutput,
+	AddFieldsResult,
 	AddFieldsSpec,
+	GroupAccumulators,
 	GroupOutput,
 	GroupSpec,
 	LookupSpec,
@@ -60,7 +61,7 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		this.stages = stages;
 	}
 
-	addFields<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<TInput & AddFieldsOutput<TInput, TFields>, TTerminal> {
+	addFields<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<AddFieldsResult<TInput, TFields>, TTerminal> {
 		return this.push({ $addFields: spec });
 	}
 
@@ -79,7 +80,7 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.push({ $facet: built });
 	}
 
-	group<TSpec extends GroupSpec<TInput>>(spec: TSpec): Chain<GroupOutput<TInput, TSpec>, TTerminal> {
+	group<TSpec extends GroupSpec<TInput>>(spec: GroupAccumulators<TInput, TSpec> & TSpec): Chain<GroupOutput<TInput, TSpec>, TTerminal> {
 		return this.push({ $group: spec });
 	}
 
@@ -89,7 +90,7 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 
 	lookup<TForeignSchema extends object, TAs extends string>(
 		spec: LookupSpec<TInput, TForeignSchema, TAs>
-	): Chain<TInput & Record<TAs, TForeignSchema[]>, TTerminal> {
+	): Chain<Omit<TInput, TAs> & Record<TAs, TForeignSchema[]>, TTerminal> {
 		return this.push({ $lookup: spec });
 	}
 
@@ -105,11 +106,11 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.create([...this.stages, stage]);
 	}
 
-	replaceRoot<TOutput extends object = Record<string, unknown>>(spec: { newRoot: Expr<TInput> }): Chain<TOutput, TTerminal> {
+	replaceRoot<TOutput extends object = Record<string, unknown>>(spec: { newRoot: ExprOrDocument<TInput> }): Chain<TOutput, TTerminal> {
 		return this.push({ $replaceRoot: spec });
 	}
 
-	replaceWith<TOutput extends object = Record<string, unknown>>(expr: Expr<TInput>): Chain<TOutput, TTerminal> {
+	replaceWith<TOutput extends object = Record<string, unknown>>(expr: ExprOrDocument<TInput>): Chain<TOutput, TTerminal> {
 		return this.push({ $replaceWith: expr });
 	}
 
@@ -117,7 +118,7 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.push({ $sample: spec });
 	}
 
-	set<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<TInput & AddFieldsOutput<TInput, TFields>, TTerminal> {
+	set<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<AddFieldsResult<TInput, TFields>, TTerminal> {
 		return this.push({ $set: spec });
 	}
 

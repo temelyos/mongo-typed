@@ -251,15 +251,15 @@ describe('UpdatePipeline', () => {
 	// Number literal projection
 	// -------------------------------------------------------------------------
 
-	describe('number literal projection', () => {
+	describe('non-zero number projection', () => {
 		it('should accept number literals in project spec', () => {
 			updatePipeline<User>()
 				.project({ num: 123, score: 1 })
 				.build();
 		});
 
-		it('should infer number type for projected number literals', () => {
-			type T1 = Assert<Equals<ProjectOutput<User, { num: 123 }>['num'], number>>;
+		it('should include the field a non-zero number names, as 1 does', () => {
+			type T1 = Assert<Equals<ProjectOutput<User, { name: 123 }>['name'], string>>;
 		});
 	});
 });

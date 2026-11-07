@@ -1,5 +1,5 @@
 import { DotNotation } from '../dot-notation.js';
-import { Expr, FieldRef, InferExprType, NumericExpr } from '../expr.js';
+import { DocumentExpr, Expr, ExprOrDocument, FieldRef, InferExprType, NumericExpr } from '../expr.js';
 import { Filter } from '../filter.js';
 import { GeoJsonPoint } from '../geo-json.js';
 import { ObjSort } from '../sort.js';
@@ -11,34 +11,38 @@ export { ObjSort } from '../sort.js';
 // ---------------------------------------------------------------------------
 
 export type AccumulatorExpr<TInput extends object> =
-	| { $addToSet: Expr<TInput> }
+	| { $addToSet: ExprOrDocument<TInput> }
 	| { $avg: Expr<TInput> | Expr<TInput>[] }
-	| { $bottom: { output: Expr<TInput>, sortBy: Record<string, -1 | 1> } }
-	| { $bottomN: { n: NumericExpr<TInput>, output: Expr<TInput>, sortBy: Record<string, -1 | 1> } }
+	| { $bottom: { output: ExprOrDocument<TInput>, sortBy: Record<string, -1 | 1> } }
+	| { $bottomN: { n: NumericExpr<TInput>, output: ExprOrDocument<TInput>, sortBy: Record<string, -1 | 1> } }
 	| { $count: Record<string, never> }
-	| { $first: Expr<TInput> }
-	| { $firstN: { input: Expr<TInput>, n: NumericExpr<TInput> } }
-	| { $last: Expr<TInput> }
-	| { $lastN: { input: Expr<TInput>, n: NumericExpr<TInput> } }
+	| { $first: ExprOrDocument<TInput> }
+	| { $firstN: { input: ExprOrDocument<TInput>, n: NumericExpr<TInput> } }
+	| { $last: ExprOrDocument<TInput> }
+	| { $lastN: { input: ExprOrDocument<TInput>, n: NumericExpr<TInput> } }
 	| { $max: Expr<TInput> | Expr<TInput>[] }
 	| { $maxN: { input: Expr<TInput>, n: NumericExpr<TInput> } }
-	| { $mergeObjects: Expr<TInput> }
+	| { $mergeObjects: ExprOrDocument<TInput> }
 	| { $min: Expr<TInput> | Expr<TInput>[] }
 	| { $minN: { input: Expr<TInput>, n: NumericExpr<TInput> } }
-	| { $push: Expr<TInput> }
+	| { $push: ExprOrDocument<TInput> }
 	| { $stdDevPop: Expr<TInput> | Expr<TInput>[] }
 	| { $stdDevSamp: Expr<TInput> | Expr<TInput>[] }
 	| { $sum: Expr<TInput> | Expr<TInput>[] }
-	| { $top: { output: Expr<TInput>, sortBy: Record<string, -1 | 1> } }
-	| { $topN: { n: NumericExpr<TInput>, output: Expr<TInput>, sortBy: Record<string, -1 | 1> } };
+	| { $top: { output: ExprOrDocument<TInput>, sortBy: Record<string, -1 | 1> } }
+	| { $topN: { n: NumericExpr<TInput>, output: ExprOrDocument<TInput>, sortBy: Record<string, -1 | 1> } };
 
-/** Inferred output type of an $addFields / $set stage — maps each spec key to its expression return type. */
+/** Inferred output type of an $addFields / $set stage — maps each spec key to its expression return type; a `$$REMOVE` key is dropped. */
 export type AddFieldsOutput<TInput extends object, TFields extends AddFieldsSpec<TInput>> = {
-	[K in keyof TFields]: InferExprType<TInput, TFields[K]>
+	[K in keyof TFields as TFields[K] extends '$$REMOVE' ? never : K]: InferExprType<TInput, TFields[K]>
 };
 
-/** Fields to add or overwrite via $addFields / $set */
-export type AddFieldsSpec<TInput extends object> = Record<string, (Expr<TInput> & object) | FieldRef<TInput> | (string & {})>;
+/** The document after an $addFields / $set stage: a field it sets again is replaced, not intersected. */
+export type AddFieldsResult<TInput extends object, TFields extends AddFieldsSpec<TInput>> =
+	Omit<TInput, keyof TFields> & AddFieldsOutput<TInput, TFields>;
+
+/** Fields to add or overwrite via $addFields / $set. Unlike `$project`, a number or boolean here is a literal value. */
+export type AddFieldsSpec<TInput extends object> = Record<string, ExprOrDocument<TInput> | FieldRef<TInput> | (string & {})>;
 
 // ---------------------------------------------------------------------------
 // Stage-specific spec types
@@ -115,6 +119,11 @@ export interface GraphLookupSpec<TInput extends object> {
 	startWith: Expr<TInput>
 }
 
+/** The fields of a $group spec other than `_id`, each of which must be an accumulator. */
+export type GroupAccumulators<TInput extends object, TSpec> = {
+	[K in Exclude<keyof TSpec, '_id'>]: AccumulatorExpr<TInput>
+};
+
 /** @internal Infers the element type of an array-returning accumulator; never if not matched */
 type GroupArrayAccumulatorElement<TInput extends object, TField> =
 	TField extends { $addToSet: infer E } ? InferExprType<TInput, E>
@@ -167,17 +176,17 @@ type GroupScalarAccumulatorOutput<TInput extends object, TField> =
 /**
  * Spec for $group.
  * `_id` is required (use `null` for global grouping).
- * All other fields must be accumulator expressions.
+ * All other fields must be accumulator expressions; the builder enforces that through {@link GroupAccumulators}.
  */
 export type GroupSpec<TInput extends object> = {
-	_id: Expr<TInput> | null
+	_id: ExprOrDocument<TInput>
 } & {
-	[field: string]: AccumulatorExpr<TInput> | Expr<TInput> | null
+	[field: string]: AccumulatorExpr<TInput> | ExprOrDocument<TInput>
 };
 
-/** True if TSpec has any non-_id field whose value is not `0 | false` — signals $project inclusion mode. */
+/** True if TSpec has any non-_id field whose value is not `0 | false`, or includes `_id` itself — signals $project inclusion mode. */
 type HasInclusion<TSpec> =
-	[{ [K in Exclude<keyof TSpec, '_id'>]: TSpec[K] extends 0 | false | undefined ? never : true }[Exclude<keyof TSpec, '_id'>]] extends [never] ? false : true;
+	[{ [K in keyof TSpec]: K extends '_id' ? TSpec[K] extends 1 | true ? true : never : TSpec[K] extends 0 | false | undefined ? never : true }[keyof TSpec]] extends [never] ? false : true;
 
 /** Spec for $lookup — equality join or pipeline join */
 export type LookupSpec<TInput extends object, TForeignSchema extends object, TAs extends string> =
@@ -223,7 +232,7 @@ export type PipelineStage<TInput extends object> =
 	| { $bucketAuto: BucketAutoSpec<TInput> }
 	| { $count: string }
 	| { $densify: DensifySpec<TInput> }
-	| { $documents: Expr<TInput>[] }
+	| { $documents: DocumentExpr<TInput>[] }
 	| { $facet: Record<string, PipelineStage<TInput>[]> }
 	| { $fill: FillSpec<TInput> }
 	| { $geoNear: GeoNearSpec<TInput> }
@@ -236,8 +245,8 @@ export type PipelineStage<TInput extends object> =
 	| { $merge: MergeSpec }
 	| { $out: string | { coll: string, db: string } }
 	| { $project: ProjectSpec<TInput> }
-	| { $replaceRoot: { newRoot: Expr<TInput> } }
-	| { $replaceWith: Expr<TInput> }
+	| { $replaceRoot: { newRoot: ExprOrDocument<TInput> } }
+	| { $replaceWith: ExprOrDocument<TInput> }
 	| { $sample: { size: number } }
 	| { $set: AddFieldsSpec<TInput> }
 	| { $setWindowFields: SetWindowFieldsSpec<TInput> }
@@ -250,18 +259,23 @@ export type PipelineStage<TInput extends object> =
 
 /** @internal Exclusion-mode $project output: TInput minus excluded fields; expression fields are typed via InferExprType. */
 type ProjectExclusionOutput<TInput extends object, TSpec> =
-	{ [K in keyof TInput as K extends keyof TSpec ? TSpec[K] extends 0 | false ? never : TSpec[K] extends 0 | 1 | boolean ? K : never : K]: TInput[K] }
-	& { [K in keyof TSpec as TSpec[K] extends 0 | 1 | boolean ? never : K]: InferExprType<TInput, TSpec[K]> };
+	{ [K in keyof TInput as K extends keyof TSpec ? TSpec[K] extends 0 | false ? never : TSpec[K] extends boolean | number ? K : never : K]: TInput[K] }
+	& { [K in keyof TSpec as TSpec[K] extends boolean | number ? never : K]: InferExprType<TInput, TSpec[K]> };
 
-/** @internal Inclusion-mode $project output: top-level fields typed from TInput, dot-notation paths reconstructed as nested objects. */
+/**
+ * @internal Inclusion-mode $project output: top-level fields typed from TInput, dot-notation paths reconstructed
+ * as nested objects. Any non-zero number includes a field, as `1` does; `_id` stays unless the spec names it.
+ */
 type ProjectInclusionOutput<TInput extends object, TSpec> =
-	{ [K in keyof TSpec & string as TSpec[K] extends 0 | false ? never : K extends `${string}.${string}` ? never : K]: TSpec[K] extends 0 | 1 | boolean ? (K extends keyof TInput ? TInput[K] : unknown) : InferExprType<TInput, TSpec[K]> }
+	{ [K in keyof TSpec & string as TSpec[K] extends 0 | '$$REMOVE' | false ? never : K extends `${string}.${string}` ? never : K]: TSpec[K] extends boolean | number ? (K extends keyof TInput ? TInput[K] : unknown) : InferExprType<TInput, TSpec[K]> }
+	& ('_id' extends keyof TSpec ? unknown : Pick<TInput, '_id' & keyof TInput>)
 	& DotNotationInclusionMerge<TInput, TSpec>;
 
 /**
  * Inferred output type of a `$project` stage.
  *
- * - **Inclusion mode** (any field = `1 | true`): only spec'd fields are kept.
+ * - **Inclusion mode** (any field = `1 | true`, a non-zero number, or an expression): only spec'd fields
+ *   are kept, and `_id` unless it is excluded.
  *   Fields with `1 | true` carry their original `TInput` type; expression
  *   fields are typed via `InferExprType`; `0 | false` fields are dropped;
  *   dot-notation keys are reconstructed as nested object types.
@@ -275,9 +289,9 @@ export type ProjectOutput<TInput extends object, TSpec extends ProjectSpec<TInpu
 export type ProjectSpec<TInput extends object> = {
 	_id?: 0 | 1 | boolean
 } & {
-	[P in DotNotation<TInput>]?: boolean | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {})
+	[P in DotNotation<TInput>]?: boolean | DocumentExpr<TInput> | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {})
 } & {
-	[field: string]: boolean | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {}) | undefined
+	[field: string]: boolean | DocumentExpr<TInput> | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {}) | undefined
 };
 
 /** Spec for $setWindowFields */
@@ -309,11 +323,24 @@ export type UnwindOutput<TInput extends object, TField extends FieldRef<TInput>>
 			: TInput
 		: TInput;
 
-/** @internal Validates that string values beginning with `$` are valid field references; other values pass through unchanged. */
+/** @internal See {@link ValidateFieldRefs}. */
+type ValidateExprValue<TInput extends object, TValue> =
+	TValue extends `$$${string}` ? TValue
+		: TValue extends `$${infer Path}` ? Path extends DotNotation<TInput> ? TValue : never
+			: TValue extends Date | readonly unknown[] | RegExp ? TValue
+				: TValue extends object
+					? [Extract<keyof TValue, `$${string}`>] extends [never]
+						? { [K in keyof TValue]: ValidateExprValue<TInput, TValue[K]> }
+						: [keyof TValue] extends [UnionToIntersection<keyof TValue>] ? TValue : never
+					: TValue;
+
+/**
+ * @internal Validates that string values beginning with `$` are valid field references, also inside embedded
+ * documents, and refuses an operator object with more than one key (Mongo takes exactly one). `$$` system
+ * variables and other values pass through unchanged.
+ */
 export type ValidateFieldRefs<TInput extends object, TSpec> = {
-	[K in keyof TSpec]: TSpec[K] extends `$${infer Path}`
-		? Path extends DotNotation<TInput> ? TSpec[K] : never
-		: TSpec[K]
+	[K in keyof TSpec]: ValidateExprValue<TInput, TSpec[K]>
 };
 
 /** Accumulator expression with an optional window specification, for use in `$setWindowFields`. */

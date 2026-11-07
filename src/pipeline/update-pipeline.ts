@@ -1,7 +1,7 @@
 import { DotNotation } from '../dot-notation.js';
-import { Expr } from '../expr.js';
+import { ExprOrDocument } from '../expr.js';
 import {
-	AddFieldsOutput,
+	AddFieldsResult,
 	AddFieldsSpec,
 	ProjectOutput,
 	ProjectSpec,
@@ -40,7 +40,7 @@ export class UpdatePipelineBuilder<TInput extends object, TTerminal = object> {
 		this.stages = stages;
 	}
 
-	addFields<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<TInput & AddFieldsOutput<TInput, TFields>, TTerminal> {
+	addFields<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<AddFieldsResult<TInput, TFields>, TTerminal> {
 		return this.push({ $addFields: spec });
 	}
 
@@ -57,15 +57,15 @@ export class UpdatePipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.create([...this.stages, stage]);
 	}
 
-	replaceRoot<TOutput extends object = Record<string, unknown>>(spec: { newRoot: Expr<TInput> }): Chain<TOutput, TTerminal> {
+	replaceRoot<TOutput extends object = Record<string, unknown>>(spec: { newRoot: ExprOrDocument<TInput> }): Chain<TOutput, TTerminal> {
 		return this.push({ $replaceRoot: spec });
 	}
 
-	replaceWith<TOutput extends object = Record<string, unknown>>(expr: Expr<TInput>): Chain<TOutput, TTerminal> {
+	replaceWith<TOutput extends object = Record<string, unknown>>(expr: ExprOrDocument<TInput>): Chain<TOutput, TTerminal> {
 		return this.push({ $replaceWith: expr });
 	}
 
-	set<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<TInput & AddFieldsOutput<TInput, TFields>, TTerminal> {
+	set<TFields extends AddFieldsSpec<TInput>>(spec: ValidateFieldRefs<TInput, TFields>): Chain<AddFieldsResult<TInput, TFields>, TTerminal> {
 		return this.push({ $set: spec });
 	}
 

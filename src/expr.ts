@@ -74,42 +74,66 @@ export interface DateTimezoneExpr<TInput extends object> {
 	timezone?: StringExpr<TInput>
 }
 
+/**
+ * An embedded document whose values are expressions, e.g. a compound `$group` `_id` or a `$replaceWith`
+ * root. Its keys may not start with `$`: such an object is an operator, so a misspelt one is refused.
+ *
+ * It is kept out of {@link Expr}: an index signature in a union turns off excess-property checks for
+ * every operator beside it. Pipeline stages take it through {@link ExprOrDocument} where documents are
+ * common, and their builders refuse an operator object with extra keys (see `ValidateFieldRefs`).
+ */
+export interface DocumentExpr<T extends object> {
+	[field: string]: ExprOrDocument<T>,
+	[operator: `$${string}`]: never
+}
+
 export type Expr<T extends object> =
 	| ArrayExpr<T>
 	| BooleanExpr<T>
 	| ConditionalExpr<T>
 	| DateExpr<T>
 	| DatePartsExpr<T>
+	| null
 	| NumericExpr<T>
 	| ObjectExpr<T>
 	| StringExpr<T>
 	| TypeExpr<T>
 	| VariableExpr<T>;
 
+/** An expression, or an embedded document of them. */
+export type ExprOrDocument<T extends object> = DocumentExpr<T> | Expr<T>;
+
 export type FieldPaths<T extends object> = DotNotation<T> extends infer U ? U & string : never;
 
 export type FieldRef<T extends object> = `$${FieldPaths<T>}` | (`$${string}` & {});
 
 /** Infers the output type of an expression value using the existing Expr category types.
+ *  - `null` → `null`
  *  - `{ $literal: T }` → `T` (passthrough constant)
+ *  - `"$$NOW"` → `Date`; `"$$ROOT"` and `"$$CURRENT"` → `TInput`; other system variables → `unknown`
  *  - `"$field"` field ref → resolves to the TInput field type
  *  - `NumericExpr` operator → `number`
  *  - `StringExpr` operator → `string`
  *  - `BooleanExpr` operator → `boolean`
  *  - `DateExpr` operator → `Date`
  *  - `ArrayExpr` operator → `unknown[]`
+ *  - an embedded document of expressions → the document of their types
  *  - Anything else → `unknown`
  */
 export type InferExprType<TInput extends object, TExpr> =
-	TExpr extends { $literal: infer V } ? V
-		: TExpr extends `$${infer K}` ? InferFieldRef<TInput, K>
-			: TExpr extends number ? number
-				: TExpr extends NumericExpr<TInput> ? number
-					: TExpr extends StringExpr<TInput> ? string
-						: TExpr extends BooleanExpr<TInput> ? boolean
-							: TExpr extends DateExpr<TInput> ? Date
-								: TExpr extends ArrayExpr<TInput> ? unknown[]
-									: unknown;
+	TExpr extends null ? null
+		: TExpr extends { $literal: infer V } ? V
+			: TExpr extends `$$${infer V}` ? InferSystemVariable<TInput, V>
+				: TExpr extends `$${infer K}` ? InferFieldRef<TInput, K>
+					: TExpr extends number ? number
+						: TExpr extends NumericExpr<TInput> ? number
+							: TExpr extends StringExpr<TInput> ? string
+								: TExpr extends BooleanExpr<TInput> ? boolean
+									: TExpr extends DateExpr<TInput> ? Date
+										: TExpr extends ArrayExpr<TInput> ? unknown[]
+											: TExpr extends object
+												? [keyof TExpr & `$${string}`] extends [never] ? { -readonly [K in keyof TExpr]: InferExprType<TInput, TExpr[K]> } : unknown
+												: unknown;
 
 /** @internal Resolves a `$field` reference string to its TInput field type, including dot-notation paths. */
 type InferFieldRef<TInput extends object, TKey extends string> =
@@ -117,6 +141,12 @@ type InferFieldRef<TInput extends object, TKey extends string> =
 		? NonNullable<TInput[TKey]>
 		: DotPathValue<TInput, TKey> extends infer V
 			? [V] extends [never] ? unknown : NonNullable<V>
+			: unknown;
+
+/** @internal The type of a `$$` system variable, by its name after the `$$`. */
+type InferSystemVariable<TInput extends object, TName extends string> =
+	TName extends 'NOW' ? Date
+		: TName extends 'CURRENT' | 'ROOT' ? TInput
 			: unknown;
 
 export type NumericExpr<TInput extends object> =

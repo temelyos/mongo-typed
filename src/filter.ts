@@ -43,7 +43,6 @@ export declare interface FilterOperators<TValue> {
 	 * including documents where the field value is null.
 	 */
 	$exists?: boolean,
-	$expr?: Expr<TValue extends object ? TValue : object>,
 	$geoIntersects?: TValue extends GeoJson ? { $geometry: GeoJson } : never,
 	$geoWithin?: TValue extends GeoJsonMultiPolygon | GeoJsonPolygon ? { $geometry: GeoJsonMultiPolygon | GeoJsonPolygon } : TValue extends [number, number] ? { $box: [[number, number], [number, number]] } | { $center: [[number, number], number] } | { $centerSphere: [[number, number], number] } | { $polygon: [number, number][] } : never,
 	$gt?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,

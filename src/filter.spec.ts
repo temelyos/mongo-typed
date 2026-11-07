@@ -914,6 +914,11 @@ describe('Filter', () => {
 		it('should accept $expr at the top-level filter with a valid aggregation expression', () => {
 			type T1 = Assert<Includes<Filter<User>, { $expr: { $gt: ['$age', 18] } }>>;
 		});
+
+		it('should NOT accept $expr on a field, which Mongo refuses ($expr is top-level only)', () => {
+			type T1 = Assert<Not<Includes<Filter<User>['age'], { $expr: { $gt: ['$age', 18] } }>>>;
+			type T2 = Assert<Not<Includes<Filter<User>['address'], { $expr: { $eq: ['$address.city', 'x'] } }>>>;
+		});
 	});
 
 	describe('implicit array element matching', () => {

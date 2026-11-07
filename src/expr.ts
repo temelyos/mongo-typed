@@ -87,6 +87,19 @@ export interface DocumentExpr<T extends object> {
 	[operator: `$${string}`]: never
 }
 
+/**
+ * An embedded document as a spec's constraint takes it, e.g. in `$addFields`: only its keys are checked
+ * here, its values by the builder's validation (`ValidateFieldRefs`). Unlike {@link DocumentExpr} it isn't
+ * generic, so checking a spec against it costs the same for every schema, and little. Its values take
+ * anything; the template literal among them keeps a nested `'$field'` from widening to `string` during
+ * inference, so the validation still sees which field it names. (`string & {}`, not `string`, which would
+ * absorb the template literal.)
+ */
+export interface DocumentLiteral {
+	[field: string]: `$${string}` | bigint | boolean | null | number | object | (string & {}) | undefined,
+	[operator: `$${string}`]: never
+}
+
 /** @internal The element type of an array type; `unknown` for anything else. */
 type ElementOf<T> = T extends readonly (infer E)[] ? E : unknown;
 

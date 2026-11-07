@@ -1,5 +1,5 @@
 import { DotNotation } from '../dot-notation.js';
-import { DocumentExpr, Expr, ExprOrDocument, FieldRef, InferExprType, NumericExpr } from '../expr.js';
+import { DocumentExpr, DocumentLiteral, Expr, ExprOrDocument, FieldRef, InferExprType, NumericExpr } from '../expr.js';
 import { Document, Filter } from '../filter.js';
 import { GeoJsonPoint } from '../geo-json.js';
 import { ObjSort } from '../sort.js';
@@ -42,7 +42,7 @@ export type AddFieldsResult<TInput extends object, TFields extends AddFieldsSpec
 	Omit<TInput, keyof TFields> & AddFieldsOutput<TInput, TFields>;
 
 /** Fields to add or overwrite via $addFields / $set. Unlike `$project`, a number or boolean here is a literal value. */
-export type AddFieldsSpec<TInput extends object> = Record<string, ExprOrDocument<TInput> | FieldRef<TInput> | (string & {})>;
+export type AddFieldsSpec<TInput extends object> = Record<string, boolean | DocumentLiteral | (Expr<TInput> & object) | FieldRef<TInput> | null | number | (string & {})>;
 
 // ---------------------------------------------------------------------------
 // Stage-specific spec types
@@ -184,9 +184,9 @@ type GroupScalarAccumulatorOutput<TInput extends object, TField> =
  * All other fields must be accumulator expressions; the builder enforces that through {@link GroupAccumulators}.
  */
 export type GroupSpec<TInput extends object> = {
-	_id: ExprOrDocument<TInput>
+	_id: boolean | DocumentLiteral | (Expr<TInput> & object) | FieldRef<TInput> | null | number | (string & {})
 } & {
-	[field: string]: AccumulatorExpr<TInput> | ExprOrDocument<TInput>
+	[field: string]: AccumulatorExpr<TInput> | boolean | DocumentLiteral | (Expr<TInput> & object) | FieldRef<TInput> | null | number | (string & {})
 };
 
 /** True if TSpec has any non-_id field whose value is not `0 | false`, or includes `_id` itself — signals $project inclusion mode. */
@@ -304,9 +304,9 @@ export type ProjectOutput<TInput extends object, TSpec extends ProjectSpec<TInpu
 
 /** Projection spec for $project (field inclusion/exclusion and computed fields). `_id`, like any field, takes a flag or an expression. */
 export type ProjectSpec<TInput extends object> = {
-	[P in DotNotation<TInput>]?: boolean | DocumentExpr<TInput> | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {})
+	[P in DotNotation<TInput>]?: boolean | DocumentLiteral | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {})
 } & {
-	[field: string]: boolean | DocumentExpr<TInput> | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {}) | undefined
+	[field: string]: boolean | DocumentLiteral | (Expr<TInput> & object) | FieldRef<TInput> | number | (string & {}) | undefined
 };
 
 /** The document after a $setWindowFields stage: the input plus its `output` fields, a field set again replaced. */
@@ -361,14 +361,18 @@ type UnwoundField<T, TPath extends keyof T, TPreserve extends boolean> = TPreser
 
 /** @internal See {@link ValidateFieldRefs}. */
 type ValidateExprValue<TInput extends object, TValue> =
-	TValue extends `$$${string}` ? TValue
-		: TValue extends `$${infer Path}` ? Path extends DotNotation<TInput> ? TValue : never
-			: TValue extends Date | readonly unknown[] | RegExp ? TValue
-				: TValue extends object
-					? [Extract<keyof TValue, `$${string}`>] extends [never]
-						? { [K in keyof TValue]: ValidateExprValue<TInput, TValue[K]> }
-						: [keyof TValue] extends [UnionToIntersection<keyof TValue>] ? TValue : never
-					: TValue;
+	// Every check is non-distributive. Inference hands this the spec's constraint, a union of every operator
+	// over the schema: distributing would walk each member, and cost ~10x the rest of the method, per schema.
+	// That wide type holds the field reference catch-all, which no written value does, so it passes as is.
+	[`$${string}` & {}] extends [TValue] ? TValue
+		: [TValue] extends [`$$${string}`] ? TValue
+			: [TValue] extends [`$${infer Path}`] ? [Path] extends [DotNotation<TInput>] ? TValue : never
+				: [TValue] extends [Date | readonly unknown[] | RegExp] ? TValue
+					: [TValue] extends [object]
+						? [Extract<keyof TValue, `$${string}`>] extends [never]
+							? { [K in keyof TValue]: ValidateExprValue<TInput, TValue[K]> }
+							: [keyof TValue] extends [UnionToIntersection<keyof TValue>] ? TValue : never
+						: TValue;
 
 /**
  * @internal Validates that string values beginning with `$` are valid field references, also inside embedded

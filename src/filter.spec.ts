@@ -915,6 +915,17 @@ describe('Filter', () => {
 			type T1 = Assert<Includes<Filter<User>, { $expr: { $gt: ['$age', 18] } }>>;
 		});
 
+		it('should take the same expressions whatever the schema, field references by any name included', () => {
+			type T1 = Assert<Equals<ObjFilter<User>['$expr'], ObjFilter<{ other: number }>['$expr']>>;
+			type T2 = Assert<Includes<Filter<User>, { $expr: { $eq: ['$name', '$$ROOT.name'] } }>>;
+			type T3 = Assert<Includes<Filter<User>, { $expr: { $gt: [{ $size: '$tags' }, { $add: ['$age', 1] }] } }>>;
+		});
+
+		it('should NOT take an operator object with a second key in $expr', () => {
+			// @ts-expect-error `y` is no operand of $eq
+			const filter: Filter<User> = { $expr: { $eq: ['$name', 'x'], y: 1 } };
+		});
+
 		it('should NOT accept $expr on a field, which Mongo refuses ($expr is top-level only)', () => {
 			type T1 = Assert<Not<Includes<Filter<User>['age'], { $expr: { $gt: ['$age', 18] } }>>>;
 			type T2 = Assert<Not<Includes<Filter<User>['address'], { $expr: { $eq: ['$address.city', 'x'] } }>>>;

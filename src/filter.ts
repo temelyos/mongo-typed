@@ -74,7 +74,14 @@ export declare interface NearFilter {
 export declare interface ObjFilterOperators<TSchema extends object> {
 	$and?: ObjFilter<TSchema>[],
 	$comment?: Document | string,
-	$expr?: Expr<TSchema>,
+	/**
+	 * An aggregation expression, the same for every schema. A field reference in it takes any name
+	 * (`FieldRef` ends in a `$${string}` catch-all, for `$$ROOT.x`, `$$this` and the like), so
+	 * `Expr<TSchema>` would accept no more and no less; it would only build the ~170 operator types again
+	 * for each schema a filter is written for, which was the largest share of a filter's type-check cost.
+	 * What that bought was the editor suggesting the schema's paths inside `$expr`.
+	 */
+	$expr?: Expr<object>,
 	$jsonSchema?: JsonSchema,
 	$nor?: ObjFilter<TSchema>[],
 	$or?: ObjFilter<TSchema>[],

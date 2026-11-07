@@ -74,10 +74,10 @@ export declare interface Update<TSchema extends object> {
 		xor: IntegerType
 	}>,
 	$currentDate?: OnlyFieldsOfTypeDotNotation<TSchema, Date, true, false, true | { $type: 'date' | 'timestamp' }>,
-	$inc?: OnlyFieldsOfTypeDotNotation<TSchema, NumericType | NumericType[], true, false, NumericType | undefined>,
+	$inc?: OnlyFieldsOfTypeDotNotation<TSchema, NumericType, true, false, NumericType | undefined>,
 	$max?: FieldsAndValues<TSchema, true, false>,
 	$min?: FieldsAndValues<TSchema, true, false>,
-	$mul?: OnlyFieldsOfTypeDotNotation<TSchema, NumericType | NumericType[], true, false, NumericType | undefined>,
+	$mul?: OnlyFieldsOfTypeDotNotation<TSchema, NumericType, true, false, NumericType | undefined>,
 	$pop?: OnlyFieldsOfTypeDotNotation<TSchema, ReadonlyArray<any>, false, false, -1 | 1>,
 	$pull?: PullOperator<TSchema>,
 	$pullAll?: PullAllOperator<TSchema>,

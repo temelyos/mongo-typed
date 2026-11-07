@@ -166,6 +166,13 @@ describe('objFilter()', () => {
 		assert.deepEqual(schema.parse({ 'at': '2026-10-08T00:00:00.000Z', 'holidays.2000': '2026-10-01T00:00:00.000Z' }), { 'at': oct8, 'holidays.2000': oct1 });
 		assert.deepEqual(schema.parse({ 'holidays.5': '2026-10-01T00:00:00.000Z' }), { 'holidays.5': oct1 });
 	});
+
+	it('resolves numeric object keys by their own schema, whichever was seen first', () => {
+		const schema = objFilter(z.object({ codes: z.object({ 0: z.string(), 1: isoDate }) }));
+		assert.deepEqual(schema.parse({ 'codes.0': '2026-10-01T00:00:00.000Z' }), { 'codes.0': '2026-10-01T00:00:00.000Z' });
+		assert.deepEqual(schema.parse({ 'codes.1': '2026-10-01T00:00:00.000Z' }), { 'codes.1': oct1 });
+		assert.deepEqual(schema.parse({ 'codes.0': '2026-10-01T00:00:00.000Z' }), { 'codes.0': '2026-10-01T00:00:00.000Z' });
+	});
 });
 
 const account = z.object({

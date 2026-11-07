@@ -122,17 +122,25 @@ function convertValue(field: z.ZodType, value: unknown, path: string[], issues: 
 
 /**
  * {@link fieldAt}'s results, per model and path: a model's schemas don't change, and filters name the same
- * paths again and again. Capped per model, as an untrusted filter may name any number of distinct paths
- * (`tags.0`, `tags.1`, ...); past the cap a path is resolved afresh each time.
+ * paths again and again. Paths come from the filter, which may be untrusted, so only the model's own fields
+ * are kept: a path that resolves, holds no numeric segment and is at most {@link CACHE_PATH_LENGTH} long,
+ * up to {@link CACHE_LIMIT} per model. Anything else is resolved afresh each time.
+ *
+ * A numeric segment is an array position (`tags.0`, `tags.1`, ...), which a filter may name without end, or
+ * a numeric object key, whose schema depends on the number; so neither is cached, nor rewritten to share
+ * an entry.
  */
-const fieldsCache = new WeakMap<z.ZodType, Map<string, undefined | z.ZodType>>();
-const FIELDS_CACHE_LIMIT = 1000;
+const fieldsCache = new WeakMap<z.ZodType, Map<string, z.ZodType>>();
+const CACHE_LIMIT = 1000;
+const CACHE_PATH_LENGTH = 256;
+const numericSegment = /(?:^|\.)\d+(?:\.|$)/;
 
 /** The schema at a dotted filter path. */
 function fieldAt(model: z.ZodType, path: string): undefined | z.ZodType {
 	let byPath = fieldsCache.get(model);
 	if (!byPath) fieldsCache.set(model, byPath = new Map());
-	if (byPath.has(path)) return byPath.get(path);
+	const cached = byPath.get(path);
+	if (cached) return cached;
 
 	let schema: undefined | z.ZodType = model;
 	for (const key of path.split('.')) {
@@ -140,7 +148,7 @@ function fieldAt(model: z.ZodType, path: string): undefined | z.ZodType {
 	}
 
 	const found = schema && unwrap(schema);
-	if (byPath.size < FIELDS_CACHE_LIMIT) byPath.set(path, found);
+	if (found && byPath.size < CACHE_LIMIT && path.length <= CACHE_PATH_LENGTH && !numericSegment.test(path)) byPath.set(path, found);
 	return found;
 }
 

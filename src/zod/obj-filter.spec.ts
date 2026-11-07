@@ -217,6 +217,14 @@ describe('objFilter()', () => {
 			assert.deepEqual(schema.parse({ 'codes.1': iso, 'range.1': iso, 'range.7': iso }), { 'codes.1': oct1, 'range.1': oct1, 'range.7': oct1 });
 		}
 	});
+
+	it('decodes a value on a field that holds arrays of itself', () => {
+		type Nested = Date | Nested[];
+		const nested: z.ZodType<Nested> = z.lazy(() => z.union([z.array(nested), z.date()]));
+		const deep: z.ZodType<unknown[]> = z.lazy(() => z.array(deep));
+		const schema = objFilter(z.object({ deep, nested }));
+		assert.deepEqual(schema.parse({ deep: 'x', nested: 'y' }), { deep: 'x', nested: 'y' });
+	});
 });
 
 const account = z.object({

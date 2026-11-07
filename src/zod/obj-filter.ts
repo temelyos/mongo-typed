@@ -75,6 +75,9 @@ function remember(cache: Map<string, z.ZodType[]>, key: string, found: z.ZodType
 }
 
 const CACHE_LIMIT = 1000;
+
+/** How many arrays deep {@link convertValue} follows a single element; see there. */
+const MAX_ARRAY_DEPTH = 32;
 const CACHE_KEY_LENGTH = 256;
 const numericSegment = /(?:^|\.)\d+(?:\.|$)/;
 
@@ -141,16 +144,17 @@ function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issu
  * compared whole has its codec and date leaves converted in place: Mongo matches a document by its exact
  * keys and their order, so nothing is stripped or reordered the way a Zod object parse would.
  */
-function convertValue(field: z.ZodType, value: unknown, path: string[], issues: Issues, direction: Direction): unknown {
+function convertValue(field: z.ZodType, value: unknown, path: string[], issues: Issues, direction: Direction, arrays = 0): unknown {
 	if (value === null || value === undefined || value instanceof RegExp) return value;
 
 	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
 
 	if (def.type === 'array') {
 		const element = unwrap(def.element as z.ZodType);
-		return Array.isArray(value)
-			? value.map(item => convertValue(element, item, path, issues, direction))
-			: convertValue(element, value, path, issues, direction);
+		if (Array.isArray(value)) return value.map(item => convertValue(element, item, path, issues, direction));
+		// One element, matched through the arrays it sits in. An array of itself (through z.lazy) has no
+		// end: past a depth no document reaches, leave the value as it is.
+		return arrays < MAX_ARRAY_DEPTH ? convertValue(element, value, path, issues, direction, arrays + 1) : value;
 	}
 
 	if (['intersection', 'object', 'record', 'union'].includes(def.type) && typeof value === 'object' && [null, Object.prototype].includes(Object.getPrototypeOf(value))) {

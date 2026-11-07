@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import type { z } from 'zod';
+
 import { describe, it } from 'node:test';
 
 import type { DotNotation, DotPathValue, OnlyFieldsOfTypeDotNotation } from './dot-notation.js';
@@ -205,6 +207,13 @@ describe('DotPathValue', () => {
 		type T2 = Assert<Equals<DotPathValue<User, 'roles.$.name', true, false>, string>>;
 		type T3 = Assert<Equals<DotPathValue<User, 'roles.$[].name', true, false>, string>>;
 	});
+
+	it('should resolve a path below an array through each element, as a query does', () => {
+		interface Order { lines: { item: { sku: string, tags: string[] } }[] }
+		type T1 = Assert<Equals<DotPathValue<Order, 'lines.item.sku'>, string>>;
+		type T2 = Assert<Equals<DotPathValue<Order, 'lines.item.tags.0'>, string>>;
+		type T3 = Assert<Equals<DotPathValue<Order, 'lines.item.missing'>, never>>;
+	});
 });
 
 describe('OnlyFieldsOfTypeDotNotation', () => {
@@ -281,5 +290,52 @@ describe('OnlyFieldsOfTypeDotNotation', () => {
 		}
 
 		type T1 = Assert<Equals<T, Expected>>;
+	});
+});
+
+describe('DotNotation of values stored whole', () => {
+	/** Shaped like bson's ObjectId: every BSON class carries `_bsontype`. */
+	interface ObjectIdLike {
+		readonly _bsontype: 'ObjectId',
+		equals: (other: unknown) => boolean,
+		readonly id: Uint8Array,
+		toHexString: () => string
+	}
+
+	interface Doc {
+		attachment: Buffer,
+		meta: { tags: string[] },
+		owner: ObjectIdLike,
+		pattern: RegExp,
+		refs: ObjectIdLike[],
+		settings: Map<string, string>,
+		when: Date
+	}
+
+	it('should not reach into a BSON value, binary data, a Date, RegExp, Map or Set', () => {
+		type T1 = Assert<Equals<DotNotation<Doc>, 'attachment' | 'meta' | 'meta.tags' | 'owner' | 'pattern' | 'refs' | 'settings' | 'when' | `meta.tags.${number}` | `refs.${number}`>>;
+	});
+
+	it('should keep the paths inside an embedded document that has methods', () => {
+		interface Money { amount: number, currency: string, format: () => string }
+		interface Order { total: Money }
+		type T1 = Assert<Equals<DotNotation<Order>, 'total' | 'total.amount' | 'total.currency'>>;
+	});
+
+	it('should list no paths for a leaf given as the document type itself', () => {
+		type T1 = Assert<Equals<DotNotation<ObjectIdLike>, never>>;
+		type T2 = Assert<Equals<DotNotation<z.ZodObject<{ name: z.ZodString }>>, never>>;
+	});
+
+	it('should NOT take any for a leaf', () => {
+		type T1 = Assert<Equals<DotNotation<any> extends never ? 'never' : 'paths', 'paths'>>;
+	});
+
+	it('should not walk a schema object passed where its inferred type belongs', () => {
+		interface Nested { schema: z.ZodObject<{ name: z.ZodString, tags: z.ZodArray<z.ZodString> }> }
+		interface StandardSchemaLike { 'shape': { a: { b: string } }, '~standard': { vendor: string, version: 1 } }
+		interface Other { schema: StandardSchemaLike }
+		type T1 = Assert<Equals<DotNotation<Nested>, 'schema'>>;
+		type T2 = Assert<Equals<DotNotation<Other>, 'schema'>>;
 	});
 });

@@ -101,17 +101,12 @@ function mapElemMatch(condition: unknown, path: string, map: Mapper): unknown {
 }
 
 function mapFilter(filter: Plain, prefix: string, map: Mapper): Plain {
-	const result: Plain = {};
-	for (const [key, value] of Object.entries(filter)) {
+	return Object.fromEntries(Object.entries(filter).map(([key, value]) => {
 		if (logicalOperators.has(key) && Array.isArray(value)) {
-			result[key] = value.map(clause => (isPlainObject(clause) ? mapFilter(clause, prefix, map) : clause));
-		} else if (key.startsWith('$')) {
-			result[key] = value;
-		} else {
-			result[key] = mapCondition(value, join(prefix, key), map);
+			return [key, value.map(clause => (isPlainObject(clause) ? mapFilter(clause, prefix, map) : clause))];
 		}
-	}
-	return result;
+		return [key, key.startsWith('$') ? value : mapCondition(value, join(prefix, key), map)];
+	}));
 }
 
 /**

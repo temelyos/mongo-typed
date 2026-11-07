@@ -60,6 +60,24 @@ function accepts(field: z.ZodType, value: unknown, direction: Direction): boolea
 	return field.safeParse(value).success;
 }
 
+/**
+ * Stores what a key or path of a filter resolved to in one of the caches below, if it is the model's own:
+ * it resolves, holds no numeric segment and is at most {@link CACHE_KEY_LENGTH} long, and the cache holds
+ * fewer than {@link CACHE_LIMIT}. Keys come from the filter, which may be untrusted; anything else is
+ * resolved afresh each time.
+ *
+ * A numeric segment is an array or tuple position (`tags.0`, `tags.1`, ...), which a filter may name
+ * without end, or a numeric object key; a tuple's or an object's schema depends on the number, so it is
+ * neither cached nor rewritten to share an entry.
+ */
+function remember(cache: Map<string, z.ZodType[]>, key: string, found: z.ZodType[]): void {
+	if (found.length > 0 && cache.size < CACHE_LIMIT && key.length <= CACHE_KEY_LENGTH && !numericSegment.test(key)) cache.set(key, found);
+}
+
+const CACHE_LIMIT = 1000;
+const CACHE_KEY_LENGTH = 256;
+const numericSegment = /(?:^|\.)\d+(?:\.|$)/;
+
 /** {@link children}' results, per schema and key: a model's schemas don't change, and filters name the same paths again and again. */
 const childrenCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
 
@@ -71,7 +89,8 @@ function children(schema: z.ZodType, key: string): z.ZodType[] {
 	let found = byKey.get(key);
 	if (!found) {
 		const all = declared(schema, key).map(unwrap);
-		byKey.set(key, found = all.length > 1 ? [...new Set(all)] : all);
+		found = all.length > 1 ? [...new Set(all)] : all;
+		remember(byKey, key, found);
 	}
 	return found;
 }
@@ -168,7 +187,7 @@ function declared(schema: z.ZodType, key: string): z.ZodType[] {
 	}
 }
 
-/** {@link fieldsAt}' results, per model and path. */
+/** {@link fieldsAt}' results, per model and path, as {@link remember} keeps them. */
 const fieldsCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
 
 /** The schemas a dotted filter path may reach, unwrapped; more than one through a union or intersection. */
@@ -182,7 +201,7 @@ function fieldsAt(model: z.ZodType, path: string): z.ZodType[] {
 		for (const key of path.split('.')) {
 			schemas = schemas.length === 1 ? children(schemas[0]!, key) : [...new Set(schemas.flatMap(schema => children(schema, key)))];
 		}
-		byPath.set(path, schemas);
+		remember(byPath, path, schemas);
 	}
 	return schemas;
 }

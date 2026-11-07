@@ -196,6 +196,27 @@ describe('objFilter()', () => {
 		type Output = Assert<Equals<z.output<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.output<typeof roster>>>>;
 		type Input = Assert<Equals<z.input<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.input<typeof roster>>>>;
 	});
+
+	it('still converts a path first seen after a model has seen many distinct ones', () => {
+		const model = z.object({ at: isoDate, holidays: z.array(isoDate) });
+		const schema = objFilter(model);
+		for (let i = 0; i < 1500; i++) schema.parse({ [`holidays.${i}`]: '2026-10-01T00:00:00.000Z', [`unknown${i}`]: 1 });
+
+		assert.deepEqual(schema.parse({ 'at': '2026-10-08T00:00:00.000Z', 'holidays.2000': '2026-10-01T00:00:00.000Z' }), { 'at': oct8, 'holidays.2000': oct1 });
+		assert.deepEqual(schema.parse({ 'holidays.5': '2026-10-01T00:00:00.000Z' }), { 'holidays.5': oct1 });
+	});
+
+	it('resolves tuple positions and numeric object keys by their own schema, whichever was seen first', () => {
+		const iso = '2026-10-01T00:00:00.000Z';
+		const schema = objFilter(z.object({
+			codes: z.object({ 0: z.string(), 1: isoDate }),
+			range: z.tuple([z.string(), isoDate], isoDate)
+		}));
+		for (const _ of [1, 2]) {
+			assert.deepEqual(schema.parse({ 'codes.0': iso, 'range.0': iso }), { 'codes.0': iso, 'range.0': iso });
+			assert.deepEqual(schema.parse({ 'codes.1': iso, 'range.1': iso, 'range.7': iso }), { 'codes.1': oct1, 'range.1': oct1, 'range.7': oct1 });
+		}
+	});
 });
 
 const account = z.object({

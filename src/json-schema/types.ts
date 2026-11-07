@@ -7,7 +7,7 @@ export type JsonSchemaArray<T = any> = Pick<
 >;
 
 export type JsonSchemaBoolean = Pick<
-	JsonSchema<boolean, 'boolean'>,
+	JsonSchema<boolean>,
 	AnyKeywords
 >;
 
@@ -22,7 +22,7 @@ export type JsonSchemaNull = Pick<
 >;
 
 export type JsonSchemaNumber = Pick<
-	JsonSchema<number, 'number'>,
+	JsonSchema<number>,
 	AnyKeywords | NumberKeywords
 >;
 

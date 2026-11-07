@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { Assert, Includes, Not } from '../types.js';
 import type { JsonSchema } from './schema.js';
+import type { JsonSchemaBoolean, JsonSchemaInteger, JsonSchemaNumber } from './types.js';
 
 describe('JsonSchema', () => {
 	describe('allOf', () => {
@@ -133,5 +134,26 @@ describe('JsonSchema', () => {
 			type T1 = Assert<Includes<JsonSchema<number>, { oneOf: [{ type: 'number' }] }>>;
 			type T2 = Assert<Includes<JsonSchema<boolean>, { oneOf: [{ type: 'boolean' }] }>>;
 		});
+	});
+
+	describe('readonly arrays', () => {
+		it('should accept readonly bsonType and type lists', () => {
+			const types = ['string', 'null'] as const;
+			type T1 = Assert<Includes<JsonSchema<null | string>, { bsonType: typeof types }>>;
+			type T2 = Assert<Includes<JsonSchema<null | string>, { type: typeof types }>>;
+		});
+	});
+});
+
+describe('JsonSchemaBoolean / JsonSchemaNumber / JsonSchemaInteger', () => {
+	it('should take the BSON aliases Mongo knows', () => {
+		type T1 = Assert<Includes<JsonSchemaBoolean, { bsonType: 'bool' }>>;
+		type T2 = Assert<Includes<JsonSchemaNumber, { bsonType: 'double' }>>;
+		type T3 = Assert<Includes<JsonSchemaNumber, { bsonType: ['int', 'long'] }>>;
+		type T4 = Assert<Includes<JsonSchemaInteger, { bsonType: 'int' }>>;
+	});
+
+	it('should NOT take the JSON type names as a bsonType', () => {
+		type T1 = Assert<Not<Includes<JsonSchemaBoolean, { bsonType: 'boolean' }>>>;
 	});
 });

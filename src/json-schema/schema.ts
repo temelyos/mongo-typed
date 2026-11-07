@@ -199,7 +199,7 @@ export interface JsonSchema<
    * An instance validates if and only if the instance is in any of the sets
    * listed for this keyword.
    */
-	bsonType?: TBsonType | TBsonType[],
+	bsonType?: MaybeReadonlyArray<TBsonType> | TBsonType,
 
 	/**
    * The value of this keyword MUST be a valid JSON Schema.
@@ -512,7 +512,7 @@ export interface JsonSchema<
    * An instance validates if and only if the instance is in any of the sets
    * listed for this keyword.
    */
-	type?: TSchemaType | TSchemaType[],
+	type?: MaybeReadonlyArray<TSchemaType> | TSchemaType,
 
 	/**
    * The value of this keyword MUST be a boolean.

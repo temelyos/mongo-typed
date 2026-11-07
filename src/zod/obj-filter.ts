@@ -60,9 +60,20 @@ function accepts(field: z.ZodType, value: unknown, direction: Direction): boolea
 	return field.safeParse(value).success;
 }
 
+/** {@link children}' results, per schema and key: a model's schemas don't change, and filters name the same paths again and again. */
+const childrenCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
+
 /** Every schema `key` may name below `schema`, unwrapped: one per union or intersection option that declares it. */
 function children(schema: z.ZodType, key: string): z.ZodType[] {
-	return [...new Set(declared(schema, key).map(unwrap))];
+	let byKey = childrenCache.get(schema);
+	if (!byKey) childrenCache.set(schema, byKey = new Map());
+
+	let found = byKey.get(key);
+	if (!found) {
+		const all = declared(schema, key).map(unwrap);
+		byKey.set(key, found = all.length > 1 ? [...new Set(all)] : all);
+	}
+	return found;
 }
 
 function convert(field: z.ZodType, value: unknown, direction: Direction): { error?: string, value?: unknown } {
@@ -157,14 +168,22 @@ function declared(schema: z.ZodType, key: string): z.ZodType[] {
 	}
 }
 
+/** {@link fieldsAt}' results, per model and path. */
+const fieldsCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
+
 /** The schemas a dotted filter path may reach, unwrapped; more than one through a union or intersection. */
 function fieldsAt(model: z.ZodType, path: string): z.ZodType[] {
-	let schemas = [model];
+	let byPath = fieldsCache.get(model);
+	if (!byPath) fieldsCache.set(model, byPath = new Map());
 
-	for (const key of path.split('.')) {
-		schemas = [...new Set(schemas.flatMap(schema => children(schema, key)))];
+	let schemas = byPath.get(path);
+	if (!schemas) {
+		schemas = [model];
+		for (const key of path.split('.')) {
+			schemas = schemas.length === 1 ? children(schemas[0]!, key) : [...new Set(schemas.flatMap(schema => children(schema, key)))];
+		}
+		byPath.set(path, schemas);
 	}
-
 	return schemas;
 }
 
@@ -222,7 +241,8 @@ export function objFilter<TModel extends z.ZodType<object>>(model: TModel, optio
 				return filter;
 			}
 
-			if (forbidden.length > 0 && hasKey(filter, opaqueOperators)) {
+			// An untrusted filter was just walked for these (they are all code operators), so only look for a trusted one.
+			if (!options.untrusted && forbidden.length > 0 && hasKey(filter, opaqueOperators)) {
 				payload.issues.push({ code: 'custom', input: filter, message: 'Filter references fields through an operator forbiddenFields cannot check.' });
 				return filter;
 			}

@@ -101,12 +101,17 @@ function mapElemMatch(condition: unknown, path: string, map: Mapper): unknown {
 }
 
 function mapFilter(filter: Plain, prefix: string, map: Mapper): Plain {
-	return Object.fromEntries(Object.entries(filter).map(([key, value]) => {
+	const result: Plain = {};
+	for (const [key, value] of Object.entries(filter)) {
 		if (logicalOperators.has(key) && Array.isArray(value)) {
-			return [key, value.map(clause => (isPlainObject(clause) ? mapFilter(clause, prefix, map) : clause))];
+			result[key] = value.map(clause => (isPlainObject(clause) ? mapFilter(clause, prefix, map) : clause));
+		} else if (key.startsWith('$')) {
+			result[key] = value;
+		} else {
+			setField(result, key, mapCondition(value, join(prefix, key), map));
 		}
-		return [key, key.startsWith('$') ? value : mapCondition(value, join(prefix, key), map)];
-	}));
+	}
+	return result;
 }
 
 /**
@@ -137,4 +142,13 @@ function mapOperators(operators: Plain, path: string, map: Mapper): Plain {
 		}
 	}
 	return result;
+}
+
+/** `target[key] = value`, except that a `__proto__` field stays a field rather than setting the prototype. */
+function setField(target: Plain, key: string, value: unknown): void {
+	if (key === '__proto__') {
+		Object.defineProperty(target, key, { configurable: true, enumerable: true, value, writable: true });
+	} else {
+		target[key] = value;
+	}
 }

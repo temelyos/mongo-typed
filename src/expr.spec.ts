@@ -435,11 +435,11 @@ describe('InferExprType', () => {
 	});
 
 	it('should resolve a dot-notation field ref to its type', () => {
-		type T1 = Assert<Equals<InferExprType<User, '$address.city'>, string>>;
+		type T1 = Assert<Equals<InferExprType<User, '$address.city'>, string[]>>; // one per element of address
 	});
 
 	it('should resolve a numeric dot-notation field ref', () => {
-		type T1 = Assert<Equals<InferExprType<User, '$address.zip'>, number>>;
+		type T1 = Assert<Equals<InferExprType<User, '$address.zip'>, number[]>>;
 	});
 
 	it('should resolve a Date field ref', () => {
@@ -503,5 +503,44 @@ describe('TypedFieldRef', () => {
 
 	it('should not allow string field paths for TypedFieldRef<T, Date>', () => {
 		type T1 = Assert<Not<Includes<TypedFieldRef<TypedRefDoc, Date>, '$name'>>>;
+	});
+});
+
+describe('InferExprType of array, conversion and date arithmetic operators', () => {
+	interface Doc {
+		at: Date,
+		meta: { score: number },
+		tags: string[]
+	}
+
+	it('should type an element taken from an array as the element', () => {
+		type T1 = Assert<Equals<InferExprType<Doc, { $arrayElemAt: ['$tags', 0] }>, string>>;
+		type T2 = Assert<Equals<InferExprType<Doc, { $first: '$tags' }>, string>>;
+		type T3 = Assert<Equals<InferExprType<Doc, { $last: '$tags' }>, string>>;
+	});
+
+	it('should keep the element type of an array reshaped as an array', () => {
+		type T1 = Assert<Equals<InferExprType<Doc, { $slice: ['$tags', 2] }>, string[]>>;
+		type T2 = Assert<Equals<InferExprType<Doc, { $reverseArray: '$tags' }>, string[]>>;
+		type T3 = Assert<Equals<InferExprType<Doc, { $filter: { cond: true, input: '$tags' } }>, string[]>>;
+	});
+
+	it('should type $indexOfArray as a number and $reduce by its initial value', () => {
+		type T1 = Assert<Equals<InferExprType<Doc, { $indexOfArray: ['$tags', 'a'] }>, number>>;
+		type T2 = Assert<Equals<InferExprType<Doc, { $reduce: { in: 0, initialValue: 0, input: '$tags' } }>, number>>;
+	});
+
+	it('should type $convert by its target type', () => {
+		type T1 = Assert<Equals<InferExprType<Doc, { $convert: { input: '$meta.score', to: 'string' } }>, string>>;
+		type T2 = Assert<Equals<InferExprType<Doc, { $convert: { input: '$tags', to: 'bool' } }>, boolean>>;
+		type T3 = Assert<Equals<InferExprType<Doc, { $convert: { input: '$tags', to: 'date' } }>, Date>>;
+		type T4 = Assert<Equals<InferExprType<Doc, { $convert: { input: '$tags', to: 'int' } }>, number>>;
+	});
+
+	it('should type a date plus or minus milliseconds as a date, and a date minus a date as a number', () => {
+		type T1 = Assert<Equals<InferExprType<Doc, { $add: ['$at', 1000] }>, Date>>;
+		type T2 = Assert<Equals<InferExprType<Doc, { $subtract: ['$at', 1000] }>, Date>>;
+		type T3 = Assert<Equals<InferExprType<Doc, { $subtract: ['$at', '$at'] }>, number>>;
+		type T4 = Assert<Equals<InferExprType<Doc, { $add: ['$meta.score', 1] }>, number>>;
 	});
 });

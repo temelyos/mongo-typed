@@ -879,3 +879,83 @@ describe('$project as MongoDB reads it', () => {
 		type T2 = Assert<Equals<keyof ProjectOutput<Account, { name: 5 }>, '_id' | 'name'>>;
 	});
 });
+
+describe('$unwind, $setWindowFields and $graphLookup as MongoDB reads them', () => {
+	interface Post {
+		_id: string,
+		meta: { tags: string[] },
+		score: number,
+		tags: string[]
+	}
+
+	type OutputOf<TBuilder> = TBuilder extends PipelineBuilder<infer TOutput, any> ? TOutput : never;
+
+	it('should unwind a field nested in an embedded document', () => {
+		type T1 = Assert<Equals<UnwindOutput<Post, '$meta.tags'>['meta']['tags'], string>>;
+	});
+
+	it('should add the includeArrayIndex field', () => {
+		const unwound = pipeline<Post>().unwind({ includeArrayIndex: 'idx', path: '$tags' });
+		type T1 = Assert<Equals<OutputOf<typeof unwound>['idx'], null | number>>;
+		unwound.sort({ idx: 1 });
+	});
+
+	it('should keep a missing or null field when preserveNullAndEmptyArrays is set', () => {
+		const unwound = pipeline<Post>().unwind({ path: '$tags', preserveNullAndEmptyArrays: true });
+		type T1 = Assert<Equals<OutputOf<typeof unwound>['tags'], null | string | undefined>>;
+	});
+
+	it('should add the $setWindowFields output fields', () => {
+		const windowed = pipeline<Post>().setWindowFields({
+			output: {
+				rank: { $rank: {} },
+				total: { $sum: '$score', window: { documents: ['unbounded', 'current'] } }
+			},
+			sortBy: { score: 1 }
+		});
+		type T1 = Assert<Equals<OutputOf<typeof windowed>['total'], number>>;
+		type T2 = Assert<Equals<OutputOf<typeof windowed>['rank'], number>>;
+		windowed.sort({ total: 1 });
+	});
+
+	it('should take the window-only operators', () => {
+		pipeline<Post>().setWindowFields({
+			output: {
+				dense: { $denseRank: {} },
+				filled: { $locf: '$score' },
+				n: { $documentNumber: {} },
+				previous: { $shift: { by: -1, default: 0, output: '$score' } }
+			},
+			sortBy: { score: 1 }
+		});
+	});
+
+	it('should filter $graphLookup by the from collection, not the input', () => {
+		const stage: PipelineStage<Post> = {
+			$graphLookup: { as: 'chain', connectFromField: 'parent', connectToField: '_id', from: 'nodes', restrictSearchWithMatch: { depth: { $lt: 3 } }, startWith: '$_id' }
+		};
+	});
+});
+
+describe('$project details', () => {
+	interface Person {
+		_id: string,
+		name: string,
+		nickname?: string,
+		stats: { x: number }
+	}
+
+	it('should take an expression for _id', () => {
+		type T1 = Assert<Equals<ProjectOutput<Person, { _id: '$name', name: 1 }>['_id'], string>>;
+		pipeline<Person>().project({ _id: '$name', name: 1 });
+	});
+
+	it('should keep an included field optional when it is optional', () => {
+		const projected: ProjectOutput<Person, { nickname: 1 }> = { _id: 'a' };
+	});
+
+	it('should type a dotted computed field by its expression', () => {
+		type T1 = Assert<Equals<ProjectOutput<Person, { 'stats.x': { $toUpper: '$name' } }>['stats']['x'], string>>;
+		type T2 = Assert<Equals<ProjectOutput<Person, { 'stats.x': 1 }>['stats']['x'], number>>;
+	});
+});

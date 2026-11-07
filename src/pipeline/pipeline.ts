@@ -12,6 +12,7 @@ import {
 	ObjSort,
 	ProjectOutput,
 	ProjectSpec,
+	SetWindowFieldsOutput,
 	SetWindowFieldsSpec,
 	UnwindOptions,
 	UnwindOutput,
@@ -122,7 +123,7 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.push({ $set: spec });
 	}
 
-	setWindowFields(spec: SetWindowFieldsSpec<TInput>): Chain<TInput, TTerminal> {
+	setWindowFields<TSpec extends SetWindowFieldsSpec<TInput>>(spec: TSpec): Chain<SetWindowFieldsOutput<TInput, TSpec>, TTerminal> {
 		return this.push({ $setWindowFields: spec });
 	}
 
@@ -142,9 +143,9 @@ export class PipelineBuilder<TInput extends object, TTerminal = object> {
 		return this.push({ $unset: fields });
 	}
 
-	unwind<TField extends FieldRef<TInput>>(
-		spec: TField | UnwindOptions<TInput, TField>
-	): Chain<UnwindOutput<TInput, TField>, TTerminal> {
+	unwind<TField extends FieldRef<TInput>, TIndex extends string = never, TPreserve extends boolean = false>(
+		spec: TField | UnwindOptions<TInput, TField, TIndex, TPreserve>
+	): Chain<UnwindOutput<TInput, TField, TIndex, TPreserve>, TTerminal> {
 		return this.push({ $unwind: spec });
 	}
 }

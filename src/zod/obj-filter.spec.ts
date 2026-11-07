@@ -153,6 +153,14 @@ describe('objFilter()', () => {
 		assert.equal(request.safeParse({ where: [] }).success, false);
 	});
 
+	it('refuses a where that is an object but not a plain one, which would read as the empty filter', () => {
+		for (const where of [new Map([['name', 'x']]), new Date(), new (class Where { name = 'x'; })()]) {
+			assert.equal(request.safeParse({ where }).success, false, where.constructor.name);
+			assert.equal(objFilter(roster, { untrusted: true }).safeParse(where).success, false, where.constructor.name);
+		}
+		assert.equal(request.safeParse({ where: Object.assign(Object.create(null) as object, { name: 'x' }) }).success, true);
+	});
+
 	it('passes through a key named like an Object.prototype member instead of throwing', () => {
 		for (const where of [
 			{ constructor: 'x' },
@@ -216,6 +224,19 @@ describe('objFilter()', () => {
 			assert.deepEqual(schema.parse({ 'codes.0': iso, 'range.0': iso }), { 'codes.0': iso, 'range.0': iso });
 			assert.deepEqual(schema.parse({ 'codes.1': iso, 'range.1': iso, 'range.7': iso }), { 'codes.1': oct1, 'range.1': oct1, 'range.7': oct1 });
 		}
+	});
+
+	it('decodes a value on a field that holds arrays of itself', () => {
+		type Nested = Date | Nested[];
+		const nested: z.ZodType<Nested> = z.lazy(() => z.union([z.array(nested), z.date()]));
+		const deep: z.ZodType<unknown[]> = z.lazy(() => z.array(deep));
+		const schema = objFilter(z.object({ deep, nested }));
+		assert.deepEqual(schema.parse({ deep: 'x', nested: 'y' }), { deep: 'x', nested: 'y' });
+	});
+
+	it('has a JSON Schema, as one where it is part of a request', () => {
+		assert.equal(z.toJSONSchema(objFilter(roster), { io: 'input' }).type, 'object');
+		assert.equal(z.toJSONSchema(request, { io: 'input', unrepresentable: 'any' }).type, 'object');
 	});
 });
 
@@ -326,6 +347,12 @@ describe('objFilter() with forbiddenFields', () => {
 		]) {
 			assert.deepEqual(refused(schema, filter), ['Filter references fields through an operator forbiddenFields cannot check.'], JSON.stringify(filter));
 		}
+	});
+
+	it('reports a forbidden path before a value that fails to convert', () => {
+		const schema = objFilter(roster, { forbiddenFields: ['owner.name'] });
+		const result = schema.safeParse({ 'createdAt': 'not a date', 'owner.name': 'x' });
+		assert.deepEqual(result.error?.issues.map(issue => issue.path), [['owner', 'name'], ['createdAt']]);
 	});
 
 	it('takes only paths of the model', () => {

@@ -43,7 +43,6 @@ export declare interface FilterOperators<TValue> {
 	 * including documents where the field value is null.
 	 */
 	$exists?: boolean,
-	$expr?: Expr<TValue extends object ? TValue : object>,
 	$geoIntersects?: TValue extends GeoJson ? { $geometry: GeoJson } : never,
 	$geoWithin?: TValue extends GeoJsonMultiPolygon | GeoJsonPolygon ? { $geometry: GeoJsonMultiPolygon | GeoJsonPolygon } : TValue extends [number, number] ? { $box: [[number, number], [number, number]] } | { $center: [[number, number], number] } | { $centerSphere: [[number, number], number] } | { $polygon: [number, number][] } : never,
 	$gt?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,
@@ -75,7 +74,14 @@ export declare interface NearFilter {
 export declare interface ObjFilterOperators<TSchema extends object> {
 	$and?: ObjFilter<TSchema>[],
 	$comment?: Document | string,
-	$expr?: Expr<TSchema>,
+	/**
+	 * An aggregation expression, the same for every schema. A field reference in it takes any name
+	 * (`FieldRef` ends in a `$${string}` catch-all, for `$$ROOT.x`, `$$this` and the like), so
+	 * `Expr<TSchema>` would accept no more and no less; it would only build the ~170 operator types again
+	 * for each schema a filter is written for, which was the largest share of a filter's type-check cost.
+	 * What that bought was the editor suggesting the schema's paths inside `$expr`.
+	 */
+	$expr?: Expr<object>,
 	$jsonSchema?: JsonSchema,
 	$nor?: ObjFilter<TSchema>[],
 	$or?: ObjFilter<TSchema>[],

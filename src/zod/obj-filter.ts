@@ -75,6 +75,9 @@ function remember(cache: Map<string, z.ZodType[]>, key: string, found: z.ZodType
 }
 
 const CACHE_LIMIT = 1000;
+
+/** How many arrays deep {@link convertValue} follows a single element; see there. */
+const MAX_ARRAY_DEPTH = 32;
 const CACHE_KEY_LENGTH = 256;
 const numericSegment = /(?:^|\.)\d+(?:\.|$)/;
 
@@ -132,8 +135,13 @@ function convertByAny(fields: z.ZodType[], value: unknown, path: string[], issue
 	return convertValue(fields[0]!, value, path, issues, direction);
 }
 
-function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issues, direction: Direction): ObjFilter<object> {
-	return mapFilterValues(filter, ({ path, value }) => convertByAny(fieldsAt(model, path), value, path.split('.'), issues, direction));
+/** `filter` with each value converted; `visit` sees each value first, with its path, as it stands. */
+function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issues, direction: Direction, visit?: (path: string, value: unknown) => void): ObjFilter<object> {
+	return mapFilterValues(filter, ({ path, value }) => {
+		visit?.(path, value);
+		const fields = fieldsAt(model, path);
+		return keepsAsIs(fields, value) ? value : convertByAny(fields, value, path.split('.'), issues, direction);
+	});
 }
 
 /**
@@ -141,19 +149,20 @@ function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issu
  * compared whole has its codec and date leaves converted in place: Mongo matches a document by its exact
  * keys and their order, so nothing is stripped or reordered the way a Zod object parse would.
  */
-function convertValue(field: z.ZodType, value: unknown, path: string[], issues: Issues, direction: Direction): unknown {
+function convertValue(field: z.ZodType, value: unknown, path: string[], issues: Issues, direction: Direction, arrays = 0): unknown {
 	if (value === null || value === undefined || value instanceof RegExp) return value;
 
 	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
 
 	if (def.type === 'array') {
 		const element = unwrap(def.element as z.ZodType);
-		return Array.isArray(value)
-			? value.map(item => convertValue(element, item, path, issues, direction))
-			: convertValue(element, value, path, issues, direction);
+		if (Array.isArray(value)) return value.map(item => convertValue(element, item, path, issues, direction));
+		// One element, matched through the arrays it sits in. An array of itself (through z.lazy) has no
+		// end: past a depth no document reaches, leave the value as it is.
+		return arrays < MAX_ARRAY_DEPTH ? convertValue(element, value, path, issues, direction, arrays + 1) : value;
 	}
 
-	if (['intersection', 'object', 'record', 'union'].includes(def.type) && typeof value === 'object' && [null, Object.prototype].includes(Object.getPrototypeOf(value))) {
+	if (documentTypes.has(def.type) && typeof value === 'object' && isPlainPrototype(Object.getPrototypeOf(value))) {
 		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, convertByAny(children(field, key), item, [...path, key], issues, direction)]));
 	}
 
@@ -190,6 +199,33 @@ function declared(schema: z.ZodType, key: string): z.ZodType[] {
 /** {@link fieldsAt}' results, per model and path, as {@link remember} keeps them. */
 const fieldsCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
 
+/**
+ * `filter` decoded, with an issue for each path it references at or below a forbidden one, the keys of a
+ * value compared whole included. One walk both converts the values and looks inside them; the issues come
+ * in the same order as if each were its own walk: the forbidden paths first, then the conversions'.
+ */
+function decodeGuarded(model: z.ZodType, filter: ObjFilter<object>, forbidden: readonly string[], issues: Issues): ObjFilter<object> {
+	const isForbidden = (path: string) => {
+		const field = withoutIndexes(path);
+		return forbidden.some(entry => field === entry || field.startsWith(`${entry}.`));
+	};
+	const found = new Set(filterPaths(filter).filter(isForbidden));
+	const conversions: Issues = [];
+
+	const decoded = convertFilter(model, filter, conversions, 'decode', (path, value) => {
+		if (value === null || typeof value !== 'object') return;
+		for (const nested of valuePaths(value, path)) {
+			if (isForbidden(nested)) found.add(nested);
+		}
+	});
+
+	for (const path of found) {
+		issues.push({ code: 'custom', input: filter, message: 'Filter references a forbidden field.', path: path.split('.') });
+	}
+	issues.push(...conversions);
+	return decoded;
+}
+
 /** The schemas a dotted filter path may reach, unwrapped; more than one through a union or intersection. */
 function fieldsAt(model: z.ZodType, path: string): z.ZodType[] {
 	let byPath = fieldsCache.get(model);
@@ -206,23 +242,8 @@ function fieldsAt(model: z.ZodType, path: string): z.ZodType[] {
 	return schemas;
 }
 
-/** Each path `filter` references at or below a forbidden one, including the keys of a value compared whole. */
-function forbiddenReferences(filter: ObjFilter<object>, forbidden: readonly string[]): string[] {
-	const isForbidden = (path: string) => {
-		const field = withoutIndexes(path);
-		return forbidden.some(entry => field === entry || field.startsWith(`${entry}.`));
-	};
-	const found = new Set(filterPaths(filter).filter(isForbidden));
-
-	mapFilterValues(filter, ({ path, value }) => {
-		for (const nested of valuePaths(value, path)) {
-			if (isForbidden(nested)) found.add(nested);
-		}
-		return value;
-	});
-
-	return [...found];
-}
+/** The schema types whose plain-object values {@link convertValue} converts key by key. */
+const documentTypes: ReadonlySet<string> = new Set(['intersection', 'object', 'record', 'union']);
 
 function hasKey(value: unknown, keys: ReadonlySet<string>, seen = new Set<object>()): boolean {
 	if (value === null || typeof value !== 'object' || seen.has(value)) return false;
@@ -236,11 +257,52 @@ function isPlainData(value: unknown, seen = new Set<object>()): boolean {
 	if (seen.has(value)) return false;
 	seen.add(value);
 
-	const entries = Object.entries(value);
-	const prototype: unknown = Object.getPrototypeOf(value);
-	if (Array.isArray(value) ? entries.length !== value.length : prototype !== Object.prototype && prototype !== null) return false;
+	const keys = Object.keys(value);
+	if (Array.isArray(value) ? keys.length !== value.length : !isPlainPrototype(Object.getPrototypeOf(value))) return false;
 
-	return entries.every(([key, item]) => !codeOperators.has(key) && isPlainData(item, seen));
+	for (const key of keys) {
+		if (codeOperators.has(key) || !isPlainData((value as Record<string, unknown>)[key], seen)) return false;
+	}
+	return true;
+}
+
+function isPlainPrototype(prototype: unknown): boolean {
+	return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Whether converting `value` by any of `fields` would return it unchanged, without walking it: no field,
+ * or a value that isn't an object on fields that convert none (see {@link keepsScalars}).
+ */
+function keepsAsIs(fields: z.ZodType[], value: unknown): boolean {
+	if (fields.length === 0) return true;
+	if (value !== null && typeof value === 'object') return false;
+	for (const field of fields) {
+		if (!keepsScalars(field)) return false;
+	}
+	return true;
+}
+
+/** {@link keepsScalars}' results, per schema. */
+const scalarsCache = new WeakMap<z.ZodType, boolean>();
+
+/**
+ * Whether {@link convertValue} returns any value that isn't an object unchanged on `field`, with no issue:
+ * it converts one only on a date or a codec, also as an array's element.
+ */
+function keepsScalars(field: z.ZodType, depth = 0): boolean {
+	// Only a field's own answer is cached: one below it holds at its depth, which another path may not share.
+	const cached = depth === 0 ? scalarsCache.get(field) : undefined;
+	if (cached !== undefined) return cached;
+
+	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
+	const isKept = def.type === 'array'
+		// An array of itself (through z.lazy) has no end: past the depth convertValue goes to, it keeps them.
+		? depth >= MAX_ARRAY_DEPTH || keepsScalars(unwrap(def.element as z.ZodType), depth + 1)
+		: def.type !== 'date' && !(def.type === 'pipe' && 'reverseTransform' in def);
+
+	if (depth === 0) scalarsCache.set(field, isKept);
+	return isKept;
 }
 
 /**
@@ -250,6 +312,8 @@ function isPlainData(value: unknown, seen = new Set<object>()): boolean {
  * doesn't declare and operators that don't take a field value pass through unchanged.
  */
 export function objFilter<TModel extends z.ZodType<object>>(model: TModel, options: ObjFilterOptions<TModel> = {}): ObjFilterSchema<TModel> {
+	// A record, not a loose object: that would copy any object's own keys, and read a Map as `{}`, the filter
+	// that matches everything.
 	const shape = z.record(z.string(), z.unknown());
 	const forbidden = (options.forbiddenFields ?? []).map(withoutIndexes);
 
@@ -266,11 +330,9 @@ export function objFilter<TModel extends z.ZodType<object>>(model: TModel, optio
 				return filter;
 			}
 
-			for (const path of forbidden.length > 0 ? forbiddenReferences(filter, forbidden) : []) {
-				payload.issues.push({ code: 'custom', input: filter, message: 'Filter references a forbidden field.', path: path.split('.') });
-			}
-
-			return convertFilter(model, filter, payload.issues, 'decode') as Record<string, unknown>;
+			return (forbidden.length > 0
+				? decodeGuarded(model, filter, forbidden, payload.issues)
+				: convertFilter(model, filter, payload.issues, 'decode')) as Record<string, unknown>;
 		},
 		encode: (filter, payload) => convertFilter(model, filter, payload.issues, 'encode') as Record<string, unknown>
 	}) as unknown as ObjFilterSchema<TModel>;
@@ -282,7 +344,7 @@ function unwrap(schema: z.ZodType): z.ZodType {
 	for (;;) {
 		const def = current.def as z.core.$ZodTypeDef & Record<string, any>;
 
-		if (['catch', 'default', 'nonoptional', 'nullable', 'optional', 'prefault', 'readonly'].includes(def.type)) {
+		if (wrapperTypes.has(def.type)) {
 			current = def.innerType as z.ZodType;
 		} else if (def.type === 'lazy') {
 			current = (def.getter as () => z.ZodType)();
@@ -300,6 +362,10 @@ function valuePaths(value: unknown, path: string): string[] {
 	return Object.entries(value).flatMap(([key, item]) => [`${path}.${key}`, ...valuePaths(item, `${path}.${key}`)]);
 }
 
+/** The schema types {@link unwrap} sees through to their inner type. */
+const wrapperTypes: ReadonlySet<string> = new Set(['catch', 'default', 'nonoptional', 'nullable', 'optional', 'prefault', 'readonly']);
+
 function withoutIndexes(path: string): string {
+	if (!numericSegment.test(path)) return path;
 	return path.split('.').filter(segment => !/^\d+$/.test(segment)).join('.');
 }

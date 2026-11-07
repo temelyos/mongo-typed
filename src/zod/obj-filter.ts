@@ -120,15 +120,28 @@ function convertValue(field: z.ZodType, value: unknown, path: string[], issues: 
 	return result.error ? value : result.value;
 }
 
+/**
+ * {@link fieldAt}'s results, per model and path: a model's schemas don't change, and filters name the same
+ * paths again and again. Capped per model, as an untrusted filter may name any number of distinct paths
+ * (`tags.0`, `tags.1`, ...); past the cap a path is resolved afresh each time.
+ */
+const fieldsCache = new WeakMap<z.ZodType, Map<string, undefined | z.ZodType>>();
+const FIELDS_CACHE_LIMIT = 1000;
+
 /** The schema at a dotted filter path. */
 function fieldAt(model: z.ZodType, path: string): undefined | z.ZodType {
-	let schema: undefined | z.ZodType = model;
+	let byPath = fieldsCache.get(model);
+	if (!byPath) fieldsCache.set(model, byPath = new Map());
+	if (byPath.has(path)) return byPath.get(path);
 
+	let schema: undefined | z.ZodType = model;
 	for (const key of path.split('.')) {
 		schema = schema && child(schema, key);
 	}
 
-	return schema && unwrap(schema);
+	const found = schema && unwrap(schema);
+	if (byPath.size < FIELDS_CACHE_LIMIT) byPath.set(path, found);
+	return found;
 }
 
 /** Each path `filter` references at or below a forbidden one, including the keys of a value compared whole. */

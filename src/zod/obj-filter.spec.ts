@@ -157,6 +157,15 @@ describe('objFilter()', () => {
 		type Output = Assert<Equals<z.output<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.output<typeof roster>>>>;
 		type Input = Assert<Equals<z.input<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.input<typeof roster>>>>;
 	});
+
+	it('still converts a path first seen after a model has seen many distinct ones', () => {
+		const model = z.object({ at: isoDate, holidays: z.array(isoDate) });
+		const schema = objFilter(model);
+		for (let i = 0; i < 1500; i++) schema.parse({ [`holidays.${i}`]: '2026-10-01T00:00:00.000Z', [`unknown${i}`]: 1 });
+
+		assert.deepEqual(schema.parse({ 'at': '2026-10-08T00:00:00.000Z', 'holidays.2000': '2026-10-01T00:00:00.000Z' }), { 'at': oct8, 'holidays.2000': oct1 });
+		assert.deepEqual(schema.parse({ 'holidays.5': '2026-10-01T00:00:00.000Z' }), { 'holidays.5': oct1 });
+	});
 });
 
 const account = z.object({

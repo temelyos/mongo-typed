@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import type { Assert, Equals, Includes } from '../types.js';
 import type {
 	AccumulatorExpr,
+	AddFieldsOutput,
 	GroupOutput,
 	PipelineStage,
 	ProjectOutput,
@@ -12,7 +13,7 @@ import type {
 	ValidateFieldRefs
 } from './stages.js';
 
-import { Pipeline, pipeline } from './pipeline.js';
+import { Pipeline, pipeline, PipelineBuilder } from './pipeline.js';
 
 interface Address {
 	city: string,
@@ -738,18 +739,18 @@ describe('ValidateFieldRefs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Number literal projection
+// Non-zero number projection: Mongo reads any non-zero number as `true`, i.e. inclusion
 // ---------------------------------------------------------------------------
 
-describe('number literal projection', () => {
+describe('non-zero number projection', () => {
 	it('should accept number literals in project spec', () => {
 		pipeline<User>()
 			.project({ num: 123, score: 1 })
 			.build();
 	});
 
-	it('should infer number type for projected number literals', () => {
-		type T1 = Assert<Equals<ProjectOutput<User, { num: 123 }>['num'], number>>;
+	it('should include the field a non-zero number names, with its TInput type', () => {
+		type T1 = Assert<Equals<ProjectOutput<User, { name: 123 }>['name'], string>>;
 	});
 
 	it('should still treat 1 as inclusion (preserving TInput type)', () => {
@@ -760,15 +761,201 @@ describe('number literal projection', () => {
 		type T1 = Assert<Equals<keyof ProjectOutput<User, { _id: 0, name: 1 }>, 'name'>>;
 	});
 
-	it('should infer number for numeric expression alongside number literal', () => {
-		type Result = ProjectOutput<User, { doubled: { $multiply: ['$score', 2] }, num: 123 }>;
+	it('should infer number for numeric expression alongside a non-zero number', () => {
+		type Result = ProjectOutput<User, { doubled: { $multiply: ['$score', 2] }, name: 123 }>;
 		type T1 = Assert<Equals<Result['doubled'], number>>;
-		type T2 = Assert<Equals<Result['num'], number>>;
+		type T2 = Assert<Equals<Result['name'], string>>;
 	});
 
-	it('should allow downstream access to number-literal projected fields', () => {
+	it('should allow downstream access to fields included by a non-zero number', () => {
 		pipeline<User>()
-			.project({ name: 1, num: 123 })
-			.sort({ num: 1 });
+			.project({ name: 1, score: 123 })
+			.sort({ score: 1 });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// MongoDB expression semantics
+// ---------------------------------------------------------------------------
+
+describe('expressions as MongoDB reads them', () => {
+	interface Account {
+		_id: string,
+		deletedAt?: Date,
+		name: string,
+		score: number,
+		tags: string[]
+	}
+
+	it('should take null as a literal inside an expression', () => {
+		pipeline<Account>().match({ $expr: { $eq: ['$deletedAt', null] } });
+		pipeline<Account>().addFields({ at: { $ifNull: ['$deletedAt', null] } });
+	});
+
+	it('should take an embedded document whose values are expressions, and type it', () => {
+		type Grouped = GroupOutput<Account, { _id: { n: '$name', s: '$score' }, people: { $push: { n: '$name' } } }>;
+		type T1 = Assert<Equals<Grouped['_id'], { n: string, s: number }>>;
+		type T2 = Assert<Equals<Grouped['people'], { n: string }[]>>;
+
+		pipeline<Account>().group({ _id: { n: '$name', s: '$score' }, c: { $sum: 1 } });
+		pipeline<Account>().replaceRoot({ newRoot: { n: '$name' } });
+		pipeline<Account>().replaceWith({ n: '$name' });
+		pipeline<Account>().project({ meta: { a: '$name' } });
+
+		const added = pipeline<Account>().addFields({ meta: { a: '$name', b: 1 } });
+		added.sort({ 'meta.a': 1 });
+	});
+
+	it('should still refuse a misspelt operator, or one with extra keys', () => {
+		// @ts-expect-error $toUpperr is no operator, and a document's keys may not start with $
+		pipeline<Account>().addFields({ x: { $toUpperr: '$name' } });
+		// @ts-expect-error an operator object takes exactly one key
+		pipeline<Account>().addFields({ x: { $toUpper: '$name', y: 1 } });
+		// @ts-expect-error also inside an embedded document
+		pipeline<Account>().addFields({ meta: { x: { $concat: ['$name'], $extra: 1 } } });
+		// @ts-expect-error a filter's $expr stays strict too
+		pipeline<Account>().match({ $expr: { $eq: ['$name', 'x'], y: 1 } });
+		// @ts-expect-error field references are checked inside an embedded document
+		pipeline<Account>().addFields({ meta: { a: '$nope' } });
+	});
+
+	it('should take number, boolean and null literals in $addFields and $set', () => {
+		type Added = AddFieldsOutput<Account, { count: 0, deletedAt: null, flag: true }>;
+		type T1 = Assert<Equals<Added, { count: number, deletedAt: null, flag: boolean }>>;
+
+		pipeline<Account>().set({ count: 0, deletedAt: null, flag: true });
+	});
+
+	it('should take system variables and type them', () => {
+		type Added = AddFieldsOutput<Account, { at: '$$NOW', doc: '$$ROOT' }>;
+		type T1 = Assert<Equals<Added['at'], Date>>;
+		type T2 = Assert<Equals<Added['doc'], Account>>;
+
+		pipeline<Account>().addFields({ at: '$$NOW', doc: '$$ROOT' });
+		pipeline<Account>().project({ name: 1, score: '$$REMOVE' });
+		// @ts-expect-error a single $ still names a field, which must exist
+		pipeline<Account>().addFields({ x: '$nope' });
+	});
+
+	it('should remove a field set to $$REMOVE', () => {
+		const removed = pipeline<Account>().set({ name: '$$REMOVE' });
+		// @ts-expect-error name was removed
+		removed.sort({ name: 1 });
+	});
+
+	it('should overwrite a field $addFields, $set or $lookup sets again, not intersect it', () => {
+		type OutputOf<TBuilder> = TBuilder extends PipelineBuilder<infer TOutput, any> ? TOutput : never;
+
+		const added = pipeline<Account>().addFields({ score: { $toString: '$score' } });
+		type T1 = Assert<Equals<OutputOf<typeof added>['score'], string>>;
+
+		const joined = pipeline<Account>().lookup<Order, 'tags'>({ as: 'tags', foreignField: 'userId', from: 'orders', localField: '_id' });
+		type T2 = Assert<Equals<OutputOf<typeof joined>['tags'], Order[]>>;
+	});
+
+	it('should accept only accumulators beside _id in $group', () => {
+		// @ts-expect-error a $group field other than _id must be an accumulator
+		pipeline<Account>().group({ _id: null, x: '$name' });
+	});
+});
+
+describe('$project as MongoDB reads it', () => {
+	interface Account {
+		_id: string,
+		name: string,
+		score: number
+	}
+
+	it('should keep _id in inclusion mode unless it is excluded', () => {
+		type T1 = Assert<Equals<keyof ProjectOutput<Account, { name: 1 }>, '_id' | 'name'>>;
+		type T2 = Assert<Equals<keyof ProjectOutput<Account, { _id: 0, name: 1 }>, 'name'>>;
+		type T3 = Assert<Equals<keyof ProjectOutput<Account, { _id: 1 }>, '_id'>>;
+
+		pipeline<Account>().project({ name: 1 }).sort({ _id: 1 });
+	});
+
+	it('should read a non-zero number as inclusion, keeping the field\'s type', () => {
+		type T1 = Assert<Equals<ProjectOutput<Account, { name: 5 }>['name'], string>>;
+		type T2 = Assert<Equals<keyof ProjectOutput<Account, { name: 5 }>, '_id' | 'name'>>;
+	});
+});
+
+describe('$unwind, $setWindowFields and $graphLookup as MongoDB reads them', () => {
+	interface Post {
+		_id: string,
+		meta: { tags: string[] },
+		score: number,
+		tags: string[]
+	}
+
+	type OutputOf<TBuilder> = TBuilder extends PipelineBuilder<infer TOutput, any> ? TOutput : never;
+
+	it('should unwind a field nested in an embedded document', () => {
+		type T1 = Assert<Equals<UnwindOutput<Post, '$meta.tags'>['meta']['tags'], string>>;
+	});
+
+	it('should add the includeArrayIndex field', () => {
+		const unwound = pipeline<Post>().unwind({ includeArrayIndex: 'idx', path: '$tags' });
+		type T1 = Assert<Equals<OutputOf<typeof unwound>['idx'], null | number>>;
+		unwound.sort({ idx: 1 });
+	});
+
+	it('should keep a missing or null field when preserveNullAndEmptyArrays is set', () => {
+		const unwound = pipeline<Post>().unwind({ path: '$tags', preserveNullAndEmptyArrays: true });
+		type T1 = Assert<Equals<OutputOf<typeof unwound>['tags'], null | string | undefined>>;
+	});
+
+	it('should add the $setWindowFields output fields', () => {
+		const windowed = pipeline<Post>().setWindowFields({
+			output: {
+				rank: { $rank: {} },
+				total: { $sum: '$score', window: { documents: ['unbounded', 'current'] } }
+			},
+			sortBy: { score: 1 }
+		});
+		type T1 = Assert<Equals<OutputOf<typeof windowed>['total'], number>>;
+		type T2 = Assert<Equals<OutputOf<typeof windowed>['rank'], number>>;
+		windowed.sort({ total: 1 });
+	});
+
+	it('should take the window-only operators', () => {
+		pipeline<Post>().setWindowFields({
+			output: {
+				dense: { $denseRank: {} },
+				filled: { $locf: '$score' },
+				n: { $documentNumber: {} },
+				previous: { $shift: { by: -1, default: 0, output: '$score' } }
+			},
+			sortBy: { score: 1 }
+		});
+	});
+
+	it('should filter $graphLookup by the from collection, not the input', () => {
+		const stage: PipelineStage<Post> = {
+			$graphLookup: { as: 'chain', connectFromField: 'parent', connectToField: '_id', from: 'nodes', restrictSearchWithMatch: { depth: { $lt: 3 } }, startWith: '$_id' }
+		};
+	});
+});
+
+describe('$project details', () => {
+	interface Person {
+		_id: string,
+		name: string,
+		nickname?: string,
+		stats: { x: number }
+	}
+
+	it('should take an expression for _id', () => {
+		type T1 = Assert<Equals<ProjectOutput<Person, { _id: '$name', name: 1 }>['_id'], string>>;
+		pipeline<Person>().project({ _id: '$name', name: 1 });
+	});
+
+	it('should keep an included field optional when it is optional', () => {
+		const projected: ProjectOutput<Person, { nickname: 1 }> = { _id: 'a' };
+	});
+
+	it('should type a dotted computed field by its expression', () => {
+		type T1 = Assert<Equals<ProjectOutput<Person, { 'stats.x': { $toUpper: '$name' } }>['stats']['x'], string>>;
+		type T2 = Assert<Equals<ProjectOutput<Person, { 'stats.x': 1 }>['stats']['x'], number>>;
 	});
 });

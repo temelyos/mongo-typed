@@ -108,7 +108,7 @@ function mapFilter(filter: Plain, prefix: string, map: Mapper): Plain {
 		} else if (key.startsWith('$')) {
 			result[key] = value;
 		} else {
-			result[key] = mapCondition(value, join(prefix, key), map);
+			setField(result, key, mapCondition(value, join(prefix, key), map));
 		}
 	}
 	return result;
@@ -142,4 +142,13 @@ function mapOperators(operators: Plain, path: string, map: Mapper): Plain {
 		}
 	}
 	return result;
+}
+
+/** `target[key] = value`, except that a `__proto__` field stays a field rather than setting the prototype. */
+function setField(target: Plain, key: string, value: unknown): void {
+	if (key === '__proto__') {
+		Object.defineProperty(target, key, { configurable: true, enumerable: true, value, writable: true });
+	} else {
+		target[key] = value;
+	}
 }

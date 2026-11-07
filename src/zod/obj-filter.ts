@@ -14,6 +14,8 @@ export interface ObjFilterOptions<TModel extends z.ZodType<object>> {
 	/**
 	 * Paths a decoded filter may not reference: at the path, below it, through `$elemMatch`, or
 	 * inside a parent compared whole. A parent with no field value (`$exists`, `$size`) stays allowed.
+	 * Operators that name fields where they can't be checked (`$expr`, `$where`, `$function`,
+	 * `$accumulator`, `$jsonSchema`) are refused whenever this is set, trusted or not.
 	 */
 	forbiddenFields?: readonly DotNotation<z.output<TModel> & object>[],
 	/**
@@ -44,25 +46,53 @@ const codeOperators: ReadonlySet<string> = new Set([
 	'$where'
 ]);
 
-function child(schema: z.ZodType, key: string): undefined | z.ZodType {
-	const field = unwrap(schema);
+/** Operators that name fields inside code, expressions or schemas, where forbiddenFields can't see them. */
+const opaqueOperators: ReadonlySet<string> = new Set(['$accumulator', '$expr', '$function', '$jsonSchema', '$where']);
+
+/** Whether `field` takes `value` as it stands on `direction`'s target side; an array field also takes one element. */
+function accepts(field: z.ZodType, value: unknown, direction: Direction): boolean {
 	const def = field.def as z.core.$ZodTypeDef & Record<string, any>;
 
-	switch (def.type) {
-		case 'array': {
-			const element = def.element as z.ZodType;
-			return /^\d+$/.test(key) ? element : child(element, key);
-		}
-		case 'object': return (def.shape as Record<string, z.ZodType>)[key];
-		case 'union': {
-			for (const option of def.options as z.ZodType[]) {
-				const found = child(option, key);
-				if (found) return found;
-			}
-			return undefined;
-		}
-		default: return undefined;
+	if (def.type === 'array' && !Array.isArray(value)) return accepts(unwrap(def.element as z.ZodType), value, direction);
+	if (def.type === 'date' && direction === 'encode') return typeof value === 'string';
+	if (def.type === 'pipe' && 'reverseTransform' in def) return (direction === 'decode' ? def.out : def.in as z.ZodType).safeParse(value).success;
+
+	return field.safeParse(value).success;
+}
+
+/**
+ * Stores what a key or path of a filter resolved to in one of the caches below, if it is the model's own:
+ * it resolves, holds no numeric segment and is at most {@link CACHE_KEY_LENGTH} long, and the cache holds
+ * fewer than {@link CACHE_LIMIT}. Keys come from the filter, which may be untrusted; anything else is
+ * resolved afresh each time.
+ *
+ * A numeric segment is an array or tuple position (`tags.0`, `tags.1`, ...), which a filter may name
+ * without end, or a numeric object key; a tuple's or an object's schema depends on the number, so it is
+ * neither cached nor rewritten to share an entry.
+ */
+function remember(cache: Map<string, z.ZodType[]>, key: string, found: z.ZodType[]): void {
+	if (found.length > 0 && cache.size < CACHE_LIMIT && key.length <= CACHE_KEY_LENGTH && !numericSegment.test(key)) cache.set(key, found);
+}
+
+const CACHE_LIMIT = 1000;
+const CACHE_KEY_LENGTH = 256;
+const numericSegment = /(?:^|\.)\d+(?:\.|$)/;
+
+/** {@link children}' results, per schema and key: a model's schemas don't change, and filters name the same paths again and again. */
+const childrenCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
+
+/** Every schema `key` may name below `schema`, unwrapped: one per union or intersection option that declares it. */
+function children(schema: z.ZodType, key: string): z.ZodType[] {
+	let byKey = childrenCache.get(schema);
+	if (!byKey) childrenCache.set(schema, byKey = new Map());
+
+	let found = byKey.get(key);
+	if (!found) {
+		const all = declared(schema, key).map(unwrap);
+		found = all.length > 1 ? [...new Set(all)] : all;
+		remember(byKey, key, found);
 	}
+	return found;
 }
 
 function convert(field: z.ZodType, value: unknown, direction: Direction): { error?: string, value?: unknown } {
@@ -84,11 +114,26 @@ function convert(field: z.ZodType, value: unknown, direction: Direction): { erro
 	return { value };
 }
 
+/**
+ * `value` converted by the first of `fields` that converts it cleanly and accepts the result, the way a
+ * union parse takes its first matching option. When none does, the first field converts it and reports why.
+ */
+function convertByAny(fields: z.ZodType[], value: unknown, path: string[], issues: Issues, direction: Direction): unknown {
+	if (fields.length === 0) return value;
+
+	if (fields.length > 1) {
+		for (const field of fields) {
+			const tried: Issues = [];
+			const converted = convertValue(field, value, path, tried, direction);
+			if (tried.length === 0 && accepts(field, converted, direction)) return converted;
+		}
+	}
+
+	return convertValue(fields[0]!, value, path, issues, direction);
+}
+
 function convertFilter(model: z.ZodType, filter: ObjFilter<object>, issues: Issues, direction: Direction): ObjFilter<object> {
-	return mapFilterValues(filter, ({ path, value }) => {
-		const field = fieldAt(model, path);
-		return field ? convertValue(field, value, path.split('.'), issues, direction) : value;
-	});
+	return mapFilterValues(filter, ({ path, value }) => convertByAny(fieldsAt(model, path), value, path.split('.'), issues, direction));
 }
 
 /**
@@ -108,11 +153,8 @@ function convertValue(field: z.ZodType, value: unknown, path: string[], issues: 
 			: convertValue(element, value, path, issues, direction);
 	}
 
-	if ((def.type === 'object' || def.type === 'union') && typeof value === 'object' && [null, Object.prototype].includes(Object.getPrototypeOf(value))) {
-		return Object.fromEntries(Object.entries(value).map(([key, item]) => {
-			const schema = child(field, key);
-			return [key, schema ? convertValue(unwrap(schema), item, [...path, key], issues, direction) : item];
-		}));
+	if (['intersection', 'object', 'record', 'union'].includes(def.type) && typeof value === 'object' && [null, Object.prototype].includes(Object.getPrototypeOf(value))) {
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, convertByAny(children(field, key), item, [...path, key], issues, direction)]));
 	}
 
 	const result = convert(field, value, direction);
@@ -120,15 +162,48 @@ function convertValue(field: z.ZodType, value: unknown, path: string[], issues: 
 	return result.error ? value : result.value;
 }
 
-/** The schema at a dotted filter path. */
-function fieldAt(model: z.ZodType, path: string): undefined | z.ZodType {
-	let schema: undefined | z.ZodType = model;
+/** The schemas `schema` declares for `key`, still wrapped; see `children`. */
+function declared(schema: z.ZodType, key: string): z.ZodType[] {
+	const def = unwrap(schema).def as z.core.$ZodTypeDef & Record<string, any>;
+	const isIndex = /^\d+$/.test(key);
 
-	for (const key of path.split('.')) {
-		schema = schema && child(schema, key);
+	switch (def.type) {
+		case 'array': return isIndex ? [def.element as z.ZodType] : declared(def.element as z.ZodType, key);
+		case 'intersection': return [...declared(def.left as z.ZodType, key), ...declared(def.right as z.ZodType, key)];
+		case 'object': {
+			const shape = def.shape as Record<string, z.ZodType>;
+			const catchall = def.catchall as undefined | z.ZodType;
+			if (Object.hasOwn(shape, key)) return [shape[key]!];
+			return catchall && catchall.def.type !== 'never' ? [catchall] : [];
+		}
+		case 'pipe': return 'reverseTransform' in def ? [] : declared(def.in as z.ZodType, key);
+		case 'record': return [def.valueType as z.ZodType];
+		case 'tuple': {
+			const item = isIndex ? (def.items as z.ZodType[])[Number(key)] ?? (def.rest as null | z.ZodType) : null;
+			return item ? [item] : [];
+		}
+		case 'union': return (def.options as z.ZodType[]).flatMap(option => declared(option, key));
+		default: return [];
 	}
+}
 
-	return schema && unwrap(schema);
+/** {@link fieldsAt}' results, per model and path, as {@link remember} keeps them. */
+const fieldsCache = new WeakMap<z.ZodType, Map<string, z.ZodType[]>>();
+
+/** The schemas a dotted filter path may reach, unwrapped; more than one through a union or intersection. */
+function fieldsAt(model: z.ZodType, path: string): z.ZodType[] {
+	let byPath = fieldsCache.get(model);
+	if (!byPath) fieldsCache.set(model, byPath = new Map());
+
+	let schemas = byPath.get(path);
+	if (!schemas) {
+		schemas = [model];
+		for (const key of path.split('.')) {
+			schemas = schemas.length === 1 ? children(schemas[0]!, key) : [...new Set(schemas.flatMap(schema => children(schema, key)))];
+		}
+		remember(byPath, path, schemas);
+	}
+	return schemas;
 }
 
 /** Each path `filter` references at or below a forbidden one, including the keys of a value compared whole. */
@@ -147,6 +222,12 @@ function forbiddenReferences(filter: ObjFilter<object>, forbidden: readonly stri
 	});
 
 	return [...found];
+}
+
+function hasKey(value: unknown, keys: ReadonlySet<string>, seen = new Set<object>()): boolean {
+	if (value === null || typeof value !== 'object' || seen.has(value)) return false;
+	seen.add(value);
+	return Object.entries(value).some(([key, item]) => keys.has(key) || hasKey(item, keys, seen));
 }
 
 function isPlainData(value: unknown, seen = new Set<object>()): boolean {
@@ -176,6 +257,12 @@ export function objFilter<TModel extends z.ZodType<object>>(model: TModel, optio
 		decode: (filter, payload) => {
 			if (options.untrusted && !isPlainData(filter)) {
 				payload.issues.push({ code: 'custom', input: filter, message: 'Filter contains a forbidden operator or value.' });
+				return filter;
+			}
+
+			// An untrusted filter was just walked for these (they are all code operators), so only look for a trusted one.
+			if (!options.untrusted && forbidden.length > 0 && hasKey(filter, opaqueOperators)) {
+				payload.issues.push({ code: 'custom', input: filter, message: 'Filter references fields through an operator forbiddenFields cannot check.' });
 				return filter;
 			}
 

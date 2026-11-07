@@ -153,9 +153,69 @@ describe('objFilter()', () => {
 		assert.equal(request.safeParse({ where: [] }).success, false);
 	});
 
+	it('passes through a key named like an Object.prototype member instead of throwing', () => {
+		for (const where of [
+			{ constructor: 'x' },
+			{ toString: 1, valueOf: { $gt: 1 } },
+			{ 'sub.hasOwnProperty': 'x' },
+			{ sub: { constructor: 'x', label: 'a' } },
+			{ shifts: { $elemMatch: { isPrototypeOf: 'x' } } }
+		]) {
+			assert.deepEqual(request.parse({ where }), { where }, JSON.stringify(where));
+		}
+	});
+
+	it('decodes a date field reached through an intersection, record, tuple or transformed object', () => {
+		const iso = oct1.toISOString();
+		const cases: [z.ZodType<object>, Record<string, unknown>, Record<string, unknown>][] = [
+			[z.intersection(z.object({ a: z.string() }), z.object({ at: z.date() })), { at: iso }, { at: oct1 }],
+			[z.object({ meta: z.record(z.string(), z.date()) }), { 'meta.x': iso }, { 'meta.x': oct1 }],
+			[z.object({ range: z.tuple([z.string(), z.date()]) }), { 'range.1': iso }, { 'range.1': oct1 }],
+			[z.object({ sub: z.object({ at: z.date() }).transform(sub => sub) }), { 'sub.at': iso }, { 'sub.at': oct1 }]
+		];
+
+		for (const [model, where, expected] of cases) {
+			assert.deepEqual(objFilter(model).parse(where), expected, JSON.stringify(where));
+		}
+	});
+
+	it('decodes a key that union options type differently by whichever option accepts the value', () => {
+		const event = z.object({
+			ev: z.discriminatedUnion('k', [
+				z.object({ k: z.literal('a'), v: z.string() }),
+				z.object({ k: z.literal('b'), v: z.date() })
+			])
+		});
+		const iso = oct1.toISOString();
+
+		assert.deepEqual(objFilter(event).parse({ 'ev.v': iso }), { 'ev.v': iso }, 'a string option keeps the string');
+		assert.deepEqual(objFilter(z.object({ ev: z.union([z.object({ v: z.number() }), z.object({ v: z.date() })]) })).parse({ 'ev.v': iso }), { 'ev.v': oct1 });
+	});
+
 	it('types the parsed filter by the model\'s output and the accepted one by its input', () => {
 		type Output = Assert<Equals<z.output<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.output<typeof roster>>>>;
 		type Input = Assert<Equals<z.input<ReturnType<typeof objFilter<typeof roster>>>, ObjFilter<z.input<typeof roster>>>>;
+	});
+
+	it('still converts a path first seen after a model has seen many distinct ones', () => {
+		const model = z.object({ at: isoDate, holidays: z.array(isoDate) });
+		const schema = objFilter(model);
+		for (let i = 0; i < 1500; i++) schema.parse({ [`holidays.${i}`]: '2026-10-01T00:00:00.000Z', [`unknown${i}`]: 1 });
+
+		assert.deepEqual(schema.parse({ 'at': '2026-10-08T00:00:00.000Z', 'holidays.2000': '2026-10-01T00:00:00.000Z' }), { 'at': oct8, 'holidays.2000': oct1 });
+		assert.deepEqual(schema.parse({ 'holidays.5': '2026-10-01T00:00:00.000Z' }), { 'holidays.5': oct1 });
+	});
+
+	it('resolves tuple positions and numeric object keys by their own schema, whichever was seen first', () => {
+		const iso = '2026-10-01T00:00:00.000Z';
+		const schema = objFilter(z.object({
+			codes: z.object({ 0: z.string(), 1: isoDate }),
+			range: z.tuple([z.string(), isoDate], isoDate)
+		}));
+		for (const _ of [1, 2]) {
+			assert.deepEqual(schema.parse({ 'codes.0': iso, 'range.0': iso }), { 'codes.0': iso, 'range.0': iso });
+			assert.deepEqual(schema.parse({ 'codes.1': iso, 'range.1': iso, 'range.7': iso }), { 'codes.1': oct1, 'range.1': oct1, 'range.7': oct1 });
+		}
 	});
 });
 
@@ -254,6 +314,18 @@ describe('objFilter() with forbiddenFields', () => {
 	it('allows the fields beside a forbidden one, and its parent without a value', () => {
 		assert.equal(guarded.safeParse({ 'authorizations.service': 'google', 'config.theme': 'dark' }).success, true);
 		assert.equal(guarded.safeParse({ authorizations: { $exists: true, $size: 1 } }).success, true);
+	});
+
+	it('refuses operators that name fields where they cannot be checked, even from a trusted caller', () => {
+		const schema = objFilter(account, { forbiddenFields: ['config.password'] });
+
+		for (const filter of [
+			{ $expr: { $eq: ['$config.password', 'x'] } },
+			{ $or: [{ $where: 'this.config.password === "x"' }] },
+			{ $jsonSchema: { properties: { config: { properties: { password: { enum: ['x'] } } } } } }
+		]) {
+			assert.deepEqual(refused(schema, filter), ['Filter references fields through an operator forbiddenFields cannot check.'], JSON.stringify(filter));
+		}
 	});
 
 	it('takes only paths of the model', () => {

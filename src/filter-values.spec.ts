@@ -113,6 +113,17 @@ describe('mapFilterValues()', () => {
 
 		assert.deepEqual(filter, { $or: [{ name: 'a' }], _id: { $in: ['b'] } });
 	});
+
+	it('keeps a __proto__ field as a field instead of setting the copy\'s prototype', () => {
+		const filter = JSON.parse('{"__proto__": {"name": "x"}, "$and": [{"__proto__": {"$ne": 1}}]}') as ObjFilter<Roster>;
+		const mapped = mapFilterValues(filter, ({ value }) => value) as Record<string, unknown>;
+
+		assert.equal(Object.getPrototypeOf(mapped), Object.prototype);
+		assert.deepEqual(Object.keys(mapped), ['__proto__', '$and']);
+		assert.deepEqual(Object.getOwnPropertyDescriptor(mapped, '__proto__')?.value, { name: 'x' });
+		assert.deepEqual(Object.keys((mapped['$and'] as object[])[0]!), ['__proto__']);
+		assert.deepEqual(visits(filter).map(([path]) => path), ['__proto__', '__proto__']);
+	});
 });
 
 describe('filterPaths()', () => {

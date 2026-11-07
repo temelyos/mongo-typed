@@ -24,29 +24,29 @@ export const BsonType = {
 	undefined: 'undefined'
 } as const;
 
-export declare const BsonTypeNumeric: Readonly<{
-	readonly array: 4,
-	readonly binData: 5,
-	readonly bool: 8,
-	readonly date: 9,
-	readonly dbPointer: 12,
-	readonly decimal: 19,
-	readonly double: 1,
-	readonly int: 16,
-	readonly javascript: 13,
-	readonly javascriptWithScope: 15,
-	readonly long: 18,
-	readonly maxKey: 127,
-	readonly minKey: -1,
-	readonly null: 10,
-	readonly object: 3,
-	readonly objectId: 7,
-	readonly regex: 11,
-	readonly string: 2,
-	readonly symbol: 14,
-	readonly timestamp: 17,
-	readonly undefined: 6
-}>;
+export const BsonTypeNumeric = {
+	array: 4,
+	binData: 5,
+	bool: 8,
+	date: 9,
+	dbPointer: 12,
+	decimal: 19,
+	double: 1,
+	int: 16,
+	javascript: 13,
+	javascriptWithScope: 15,
+	long: 18,
+	maxKey: 127,
+	minKey: -1,
+	null: 10,
+	object: 3,
+	objectId: 7,
+	regex: 11,
+	string: 2,
+	symbol: 14,
+	timestamp: 17,
+	undefined: 6
+} as const;
 
 export declare type BsonType = typeof BsonType[keyof typeof BsonType];
 

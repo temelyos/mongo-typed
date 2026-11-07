@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { NumericType } from './bson-types.js';
 import { DotNotation, DotPathValue, OnlyFieldsOfTypeDotNotation } from './dot-notation.js';
 import { Filter } from './filter.js';
-import { Assert, Equals } from './types.js';
+import { Assert, Equals, Includes, Not } from './types.js';
 import { ArrayFilter, Update } from './update.js';
 
 interface Role {
@@ -75,6 +75,14 @@ describe('Update', () => {
 		}>;
 
 		type T1 = Assert<Equals<Expected | undefined, T>>;
+	});
+
+	it('should NOT allow $inc or $mul on a whole numeric array, only its elements', () => {
+		interface Scored { scores: number[] }
+
+		type T1 = Assert<Not<Includes<keyof NonNullable<Update<Scored>['$inc']>, 'scores'>>>;
+		type T2 = Assert<Not<Includes<keyof NonNullable<Update<Scored>['$mul']>, 'scores'>>>;
+		type T3 = Assert<Includes<keyof NonNullable<Update<Scored>['$inc']>, 'scores.$' | `scores.${number}`>>;
 	});
 
 	it('should allow $bit with numeric fields', () => {

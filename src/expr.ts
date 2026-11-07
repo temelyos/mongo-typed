@@ -74,49 +74,135 @@ export interface DateTimezoneExpr<TInput extends object> {
 	timezone?: StringExpr<TInput>
 }
 
+/**
+ * An embedded document whose values are expressions, e.g. a compound `$group` `_id` or a `$replaceWith`
+ * root. Its keys may not start with `$`: such an object is an operator, so a misspelt one is refused.
+ *
+ * It is kept out of {@link Expr}: an index signature in a union turns off excess-property checks for
+ * every operator beside it. Pipeline stages take it through {@link ExprOrDocument} where documents are
+ * common, and their builders refuse an operator object with extra keys (see `ValidateFieldRefs`).
+ */
+export interface DocumentExpr<T extends object> {
+	[field: string]: ExprOrDocument<T>,
+	[operator: `$${string}`]: never
+}
+
+/**
+ * An embedded document as a spec's constraint takes it, e.g. in `$addFields`: only its keys are checked
+ * here, its values by the builder's validation (`ValidateFieldRefs`). Unlike {@link DocumentExpr} it isn't
+ * generic, so checking a spec against it costs the same for every schema, and little. Its values take
+ * anything; the template literal among them keeps a nested `'$field'` from widening to `string` during
+ * inference, so the validation still sees which field it names. (`string & {}`, not `string`, which would
+ * absorb the template literal.)
+ */
+export interface DocumentLiteral {
+	[field: string]: `$${string}` | bigint | boolean | null | number | object | (string & {}) | undefined,
+	[operator: `$${string}`]: never
+}
+
+/** @internal The element type of an array type; `unknown` for anything else. */
+type ElementOf<T> = T extends readonly (infer E)[] ? E : unknown;
+
 export type Expr<T extends object> =
 	| ArrayExpr<T>
 	| BooleanExpr<T>
 	| ConditionalExpr<T>
 	| DateExpr<T>
 	| DatePartsExpr<T>
+	| null
 	| NumericExpr<T>
 	| ObjectExpr<T>
 	| StringExpr<T>
 	| TypeExpr<T>
 	| VariableExpr<T>;
 
+/** An expression, or an embedded document of them. */
+export type ExprOrDocument<T extends object> = DocumentExpr<T> | Expr<T>;
+
 export type FieldPaths<T extends object> = DotNotation<T> extends infer U ? U & string : never;
 
 export type FieldRef<T extends object> = `$${FieldPaths<T>}` | (`$${string}` & {});
 
+/** @internal Whether a union of operand types holds a `Date`, which makes `$add`/`$subtract` date arithmetic. */
+type HasDate<T> = [Extract<T, Date>] extends [never] ? false : true;
+
+/** @internal The type of an expression by the category it belongs to. */
+type InferCategoryType<TInput extends object, TExpr, TDepth extends unknown[]> =
+	TExpr extends NumericExpr<TInput> ? number
+		: TExpr extends StringExpr<TInput> ? string
+			: TExpr extends BooleanExpr<TInput> ? boolean
+				: TExpr extends DateExpr<TInput> ? Date
+					: TExpr extends ArrayExpr<TInput> ? unknown[]
+						: TExpr extends object
+							? [keyof TExpr & `$${string}`] extends [never] ? { -readonly [K in keyof TExpr]: InferExprType<TInput, TExpr[K], TDepth> } : unknown
+							: unknown;
+
+/** @internal The type `$convert` produces for its `to`, by alias or number. */
+type InferConvertTarget<TTo> =
+	TTo extends 2 | 'string' ? string
+		: TTo extends 8 | 'bool' ? boolean
+			: TTo extends 9 | 'date' ? Date
+				: TTo extends 1 | 16 | 18 | 19 | 'decimal' | 'double' | 'int' | 'long' ? number
+					: unknown;
+
 /** Infers the output type of an expression value using the existing Expr category types.
+ *  - `null` → `null`
  *  - `{ $literal: T }` → `T` (passthrough constant)
+ *  - `"$$NOW"` → `Date`; `"$$ROOT"` and `"$$CURRENT"` → `TInput`; other system variables → `unknown`
  *  - `"$field"` field ref → resolves to the TInput field type
  *  - `NumericExpr` operator → `number`
  *  - `StringExpr` operator → `string`
  *  - `BooleanExpr` operator → `boolean`
  *  - `DateExpr` operator → `Date`
  *  - `ArrayExpr` operator → `unknown[]`
+ *  - an embedded document of expressions → the document of their types
  *  - Anything else → `unknown`
  */
-export type InferExprType<TInput extends object, TExpr> =
-	TExpr extends { $literal: infer V } ? V
-		: TExpr extends `$${infer K}` ? InferFieldRef<TInput, K>
-			: TExpr extends number ? number
-				: TExpr extends NumericExpr<TInput> ? number
-					: TExpr extends StringExpr<TInput> ? string
-						: TExpr extends BooleanExpr<TInput> ? boolean
-							: TExpr extends DateExpr<TInput> ? Date
-								: TExpr extends ArrayExpr<TInput> ? unknown[]
-									: unknown;
+export type InferExprType<TInput extends object, TExpr, TDepth extends unknown[] = []> =
+	// A wide expression type (`Expr` itself, or a category of it, as a spec still at its constraint is)
+	// holds the field reference catch-all, which no written expression does. Typing it would fan out over
+	// every operator, recursively, so it stays `unknown`; so does anything nested past TDepth.
+	[`$${string}` & {}] extends [TExpr] ? unknown
+		: TDepth['length'] extends 8 ? unknown
+			: TExpr extends null ? null
+				: TExpr extends { $literal: infer V } ? V
+					: TExpr extends `$$${infer V}` ? InferSystemVariable<TInput, V>
+						: TExpr extends `$${infer K}` ? InferFieldRef<TInput, K>
+							: TExpr extends number ? number
+								: InferOperatorType<TInput, TExpr, [...TDepth, 1]>;
 
-/** @internal Resolves a `$field` reference string to its TInput field type, including dot-notation paths. */
+/**
+ * @internal Resolves a `$field` reference string to its TInput field type, including dot-notation paths.
+ * A path through an array of documents gives an array, one value per element, as aggregation does.
+ */
 type InferFieldRef<TInput extends object, TKey extends string> =
 	TKey extends keyof TInput
 		? NonNullable<TInput[TKey]>
-		: DotPathValue<TInput, TKey> extends infer V
+		: DotPathValue<TInput, TKey, false, true> extends infer V
 			? [V] extends [never] ? unknown : NonNullable<V>
+			: unknown;
+
+/**
+ * @internal The type of an expression by its operator, for operators whose type depends on their operands;
+ * by its category for any other. `TDepth` bounds the recursion: on a spec still at its constraint, `TExpr`
+ * is the recursive `Expr` union itself, whose operands are `Expr` again.
+ */
+type InferOperatorType<TInput extends object, TExpr, TDepth extends unknown[]> =
+	TExpr extends { $arrayElemAt: [infer A, any] } | { $first: infer A } | { $last: infer A } ? ElementOf<InferExprType<TInput, A, TDepth>>
+		: TExpr extends { $filter: { input: infer A } } | { $reverseArray: infer A } | { $slice: [infer A, ...any[]] } | { $sortArray: { input: infer A } } ? InferExprType<TInput, A, TDepth>
+			: TExpr extends { $concatArrays: readonly (infer A)[] } ? InferExprType<TInput, A, TDepth>
+				: TExpr extends { $indexOfArray: any } ? number
+					: TExpr extends { $reduce: { initialValue: infer V } } ? InferExprType<TInput, V, TDepth>
+						: TExpr extends { $convert: { to: infer TTo } } ? InferConvertTarget<TTo>
+							: TExpr extends { $add: readonly (infer A)[] } ? HasDate<InferExprType<TInput, A, TDepth>> extends true ? Date : number
+								: TExpr extends { $subtract: [infer A, infer B] }
+									? HasDate<InferExprType<TInput, A, TDepth>> extends true ? HasDate<InferExprType<TInput, B, TDepth>> extends true ? number : Date : number
+									: InferCategoryType<TInput, TExpr, TDepth>;
+
+/** @internal The type of a `$$` system variable, by its name after the `$$`. */
+type InferSystemVariable<TInput extends object, TName extends string> =
+	TName extends 'NOW' ? Date
+		: TName extends 'CURRENT' | 'ROOT' ? TInput
 			: unknown;
 
 export type NumericExpr<TInput extends object> =

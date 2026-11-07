@@ -54,6 +54,13 @@ describe('Filter', () => {
 			type T3 = Assert<Includes<NumberActual, { $all: number[] }>>;
 		});
 
+		it('should allow $all of $elemMatch conditions, but not mixed with values', () => {
+			type Actual = Filter<User>['roles'];
+
+			type T1 = Assert<Includes<Actual, { $all: { $elemMatch: Filter<Role> }[] }>>;
+			type T2 = Assert<Not<Includes<Actual, { $all: (Role | { $elemMatch: Filter<Role> })[] }>>>;
+		});
+
 		it('should NOT allow $all for non arrays', () => {
 			type StringActual = Filter<User>['name'];
 			type ObjectActual = Filter<User>['address'];
@@ -72,10 +79,11 @@ describe('Filter', () => {
 			type Actual = Filter<User>['roles.flags'];
 
 			type T1 = Assert<Includes<Actual, { $bitsAllClear: number }>>;
+			type T2 = Assert<Includes<Filter<User>['roles.bits'], { $bitsAllClear: number }>>; // any element of an integer array
 		});
 
 		it('should only allow bitwise operators on integer fields', () => {
-			type ActualArray = Filter<User>['roles.bits'];
+			type ActualArray = Filter<User>['tags'];
 			type ActualString = Filter<User>['name'];
 			type ActualBoolean = Filter<User>['isHuman'];
 			type ActualObject = Filter<User>['address'];
@@ -92,10 +100,11 @@ describe('Filter', () => {
 			type Actual = Filter<User>['roles.flags'];
 
 			type T1 = Assert<Includes<Actual, { $bitsAllSet: number }>>;
+			type T2 = Assert<Includes<Filter<User>['roles.bits'], { $bitsAllSet: number }>>; // any element of an integer array
 		});
 
 		it('should only allow bitwise operators on integer fields', () => {
-			type ActualArray = Filter<User>['roles.bits'];
+			type ActualArray = Filter<User>['tags'];
 			type ActualString = Filter<User>['name'];
 			type ActualBoolean = Filter<User>['isHuman'];
 			type ActualObject = Filter<User>['address'];
@@ -112,10 +121,11 @@ describe('Filter', () => {
 			type Actual = Filter<User>['roles.flags'];
 
 			type T1 = Assert<Includes<Actual, { $bitsAnyClear: number }>>;
+			type T2 = Assert<Includes<Filter<User>['roles.bits'], { $bitsAnyClear: number }>>; // any element of an integer array
 		});
 
 		it('should only allow bitwise operators on integer fields', () => {
-			type ActualArray = Filter<User>['roles.bits'];
+			type ActualArray = Filter<User>['tags'];
 			type ActualString = Filter<User>['name'];
 			type ActualBoolean = Filter<User>['isHuman'];
 			type ActualObject = Filter<User>['address'];
@@ -132,10 +142,11 @@ describe('Filter', () => {
 			type Actual = Filter<User>['roles.flags'];
 
 			type T1 = Assert<Includes<Actual, { $bitsAnySet: number }>>;
+			type T2 = Assert<Includes<Filter<User>['roles.bits'], { $bitsAnySet: number }>>; // any element of an integer array
 		});
 
 		it('should only allow bitwise operators on integer fields', () => {
-			type ActualArray = Filter<User>['roles.bits'];
+			type ActualArray = Filter<User>['tags'];
 			type ActualString = Filter<User>['name'];
 			type ActualBoolean = Filter<User>['isHuman'];
 			type ActualObject = Filter<User>['address'];
@@ -405,6 +416,12 @@ describe('Filter', () => {
 
 			type T1 = Assert<Includes<ActualArray, { $in: string[] }>>;
 			type T2 = Assert<Includes<ActualArray, { $in: string[][] }>>;
+			type T3 = Assert<Includes<ActualArray, { $in: (RegExp | string)[] }>>;
+		});
+
+		it('should allow regular expressions for string fields only', () => {
+			type T1 = Assert<Includes<Filter<User>['name'], { $in: (RegExp | string)[] }>>;
+			type T2 = Assert<Not<Includes<Filter<User>['age'], { $in: RegExp[] }>>>;
 		});
 	});
 
@@ -579,6 +596,7 @@ describe('Filter', () => {
 			type Actual = Filter<User>['age'];
 
 			type T1 = Assert<Includes<Actual, { $mod: [number, number] }>>;
+			type T2 = Assert<Includes<Filter<User>['roles.bits'], { $mod: [number, number] }>>; // any element
 		});
 
 		it('should NOT allow $mod on non-numeric fields', () => {
@@ -600,7 +618,7 @@ describe('Filter', () => {
 			type ActualObject = Filter<User>['address'];
 
 			type T1 = Assert<Includes<ActualString, { $ne: string }>>;
-			type T2 = Assert<Includes<ActualString, { $ne: RegExp }>>;
+			type T2 = Assert<Not<Includes<ActualString, { $ne: RegExp }>>>; // Mongo: "Can't have regex as arg to $ne"
 
 			type T4 = Assert<Not<Includes<ActualString, { $ne: number }>>>;
 			type T5 = Assert<Not<Includes<ActualString, { $ne: boolean }>>>;
@@ -685,6 +703,12 @@ describe('Filter', () => {
 
 			type T1 = Assert<Includes<ActualArray, { $nin: string[] }>>;
 			type T2 = Assert<Includes<ActualArray, { $nin: string[][] }>>;
+			type T3 = Assert<Includes<ActualArray, { $nin: (RegExp | string)[] }>>;
+		});
+
+		it('should allow regular expressions for string fields only', () => {
+			type T1 = Assert<Includes<Filter<User>['name'], { $nin: (RegExp | string)[] }>>;
+			type T2 = Assert<Not<Includes<Filter<User>['age'], { $nin: RegExp[] }>>>;
 		});
 	});
 
@@ -701,6 +725,7 @@ describe('Filter', () => {
 		it('should allow $not with RegExp on string fields', () => {
 			type Actual = Filter<User>['name'];
 			type T1 = Assert<Includes<Actual, { $not: RegExp }>>;
+			type T2 = Assert<Includes<Filter<User>['tags'], { $not: RegExp }>>; // no element matches
 		});
 
 		it('should allow $not with FilterOperators on string fields', () => {
@@ -735,6 +760,7 @@ describe('Filter', () => {
 		it('should allow $options on string fields', () => {
 			type Actual = Filter<User>['name'];
 			type T1 = Assert<Includes<Actual, { $options: string }>>;
+			type T2 = Assert<Includes<Filter<User>['tags'], { $options: string, $regex: string }>>;
 		});
 
 		it('should NOT allow $options on non-string fields', () => {
@@ -772,6 +798,7 @@ describe('Filter', () => {
 			type Actual = Filter<User>['name'];
 
 			type T1 = Assert<Includes<Actual, RegExp | { $regex: RegExp | string }>>;
+			type T5 = Assert<Includes<Filter<User>['tags'], { $regex: RegExp | string }>>; // any element of a string array
 
 			type T2 = Assert<Not<Includes<Actual, number>>>;
 			type T3 = Assert<Not<Includes<Actual, boolean>>>;
@@ -780,7 +807,7 @@ describe('Filter', () => {
 
 		it('should NOT allow regex for non-string fields', () => {
 			type ActualNumber = Filter<User>['age'];
-			type ActualArray = Filter<User>['tags'];
+			type ActualArray = Filter<User>['roles'];
 			type ActualObj = Filter<User>['address'];
 
 			type T1 = Assert<Not<Includes<ActualNumber, { $regex: RegExp | string }>>>;
@@ -916,6 +943,37 @@ describe('Filter', () => {
 
 			type T1 = Assert<Not<Includes<ActualStringArray, number>>>;
 			type T2 = Assert<Not<Includes<ActualObjectArray, string>>>;
+		});
+	});
+
+	describe('paths through arrays of documents', () => {
+		interface Order {
+			createdAt: Date,
+			lines: { item: { sku: string, tags: string[] }, qty: number }[]
+		}
+
+		it('should type a path that goes more than one level below an array without an index', () => {
+			type T1 = Assert<Equals<Filter<Order>['lines.item.sku'], Condition<string, true> | undefined>>;
+			type T2 = Assert<Not<Includes<Filter<Order>['lines.item.sku'], number>>>;
+			type T3 = Assert<Not<Includes<Filter<Order>['lines.item.sku'], { $gt: number }>>>;
+			type T4 = Assert<Includes<Filter<Order>['lines.item.tags'], { $all: string[] }>>;
+		});
+
+		it('should match an indexed path the same way', () => {
+			type T1 = Assert<Equals<Filter<Order>['lines.0.item.sku'], Condition<string, true> | undefined>>;
+		});
+	});
+
+	describe('leaf objects', () => {
+		interface Event {
+			at: Date,
+			pattern: RegExp
+		}
+
+		it('should NOT accept a partial Date or RegExp as the value of one', () => {
+			type T1 = Assert<Not<Includes<Filter<Event>['at'], { getTime: () => number }>>>;
+			type T2 = Assert<Not<Includes<Filter<Event>['pattern'], { source: string }>>>;
+			type T3 = Assert<Includes<Filter<Event>['at'], Date | { $gte: Date }>>;
 		});
 	});
 

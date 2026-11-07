@@ -20,8 +20,9 @@ export type And<
 export type Assert<T extends true> = T;
 
 export type DeepPartial<T> =
+	// Values Mongo stores whole: a partial Date or RegExp is no Date or RegExp at all.
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-	T extends Function
+	T extends Date | Function | RegExp | Uint8Array
 		? T
 		: T extends Array<infer U>
 			? Array<DeepPartial<U>>

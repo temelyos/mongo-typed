@@ -30,11 +30,12 @@ export declare type FilterOperations<T> = T extends Record<string, any> ? {
 } : FilterOperators<T>;
 
 export declare interface FilterOperators<TValue> {
-	$all?: TValue extends ReadonlyArray<infer U> ? ReadonlyArray<U> : never,
-	$bitsAllClear?: TValue extends IntegerType ? BitwiseFilter : never,
-	$bitsAllSet?: TValue extends IntegerType ? BitwiseFilter : never,
-	$bitsAnyClear?: TValue extends IntegerType ? BitwiseFilter : never,
-	$bitsAnySet?: TValue extends IntegerType ? BitwiseFilter : never,
+	/** Every value, or every `$elemMatch` condition (all items one or the other), matches an element. */
+	$all?: TValue extends ReadonlyArray<infer U> ? ReadonlyArray<U> | ReadonlyArray<{ $elemMatch: Filter<U> }> : never,
+	$bitsAllClear?: LeafOperand<TValue, IntegerType, BitwiseFilter>,
+	$bitsAllSet?: LeafOperand<TValue, IntegerType, BitwiseFilter>,
+	$bitsAnyClear?: LeafOperand<TValue, IntegerType, BitwiseFilter>,
+	$bitsAnySet?: LeafOperand<TValue, IntegerType, BitwiseFilter>,
 	$elemMatch?: TValue extends ReadonlyArray<infer U> ? Filter<U> : never,
 	$eq?: NonNullable<TValue> extends ReadonlyArray<infer U> ? TValue | U : TValue,
 	/**
@@ -47,19 +48,20 @@ export declare interface FilterOperators<TValue> {
 	$geoWithin?: TValue extends GeoJsonMultiPolygon | GeoJsonPolygon ? { $geometry: GeoJsonMultiPolygon | GeoJsonPolygon } : TValue extends [number, number] ? { $box: [[number, number], [number, number]] } | { $center: [[number, number], number] } | { $centerSphere: [[number, number], number] } | { $polygon: [number, number][] } : never,
 	$gt?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,
 	$gte?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,
-	$in?: NonNullable<TValue> extends ReadonlyArray<infer U> ? ReadonlyArray<TValue> | ReadonlyArray<U> : ReadonlyArray<TValue>,
+	$in?: NonNullable<TValue> extends ReadonlyArray<infer U> ? ReadonlyArray<Pattern<U> | U> | ReadonlyArray<TValue> : ReadonlyArray<Pattern<TValue> | TValue>,
 	$lt?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,
 	$lte?: NonNullable<TValue> extends ReadonlyArray<infer U> ? U : TValue,
 	$maxDistance?: TValue extends [number, number] | GeoJsonPoint ? number : never,
 	$minDistance?: TValue extends [number, number] | GeoJsonPoint ? number : never,
-	$mod?: TValue extends number ? [number, number] : never,
-	$ne?: NonNullable<TValue> extends ReadonlyArray<infer U> ? AlternativeTypes<TValue> | AlternativeTypes<U> : AlternativeTypes<TValue>,
+	$mod?: LeafOperand<TValue, number, [number, number]>,
+	/** Unlike `$eq`'s shorthand, `$ne` takes no regular expression: Mongo refuses one. */
+	$ne?: NonNullable<TValue> extends ReadonlyArray<infer U> ? TValue | U : TValue,
 	$near?: TValue extends [number, number] | GeoJsonPoint ? [number, number] | NearFilter : never,
 	$nearSphere?: TValue extends GeoJsonPoint ? NearFilter : never,
-	$nin?: NonNullable<TValue> extends ReadonlyArray<infer U> ? ReadonlyArray<TValue> | ReadonlyArray<U> : ReadonlyArray<TValue>,
-	$not?: TValue extends string ? FilterOperators<TValue> | RegExp : FilterOperators<TValue>,
-	$options?: TValue extends string ? string : never,
-	$regex?: TValue extends string ? RegExp | string : never,
+	$nin?: NonNullable<TValue> extends ReadonlyArray<infer U> ? ReadonlyArray<Pattern<U> | U> | ReadonlyArray<TValue> : ReadonlyArray<Pattern<TValue> | TValue>,
+	$not?: FilterOperators<TValue> | LeafOperand<TValue, string, RegExp>,
+	$options?: LeafOperand<TValue, string, string>,
+	$regex?: LeafOperand<TValue, string, RegExp | string>,
 	$size?: TValue extends ReadonlyArray<any> ? number : never,
 	$type?: Array<BsonType | BsonTypeNumeric> | BsonType | BsonTypeNumeric
 }
@@ -88,7 +90,18 @@ export declare interface ObjFilterOperators<TSchema extends object> {
 
 export type Filter<TSchema> = TSchema extends object ? ObjFilter<TSchema> : Condition<TSchema>;
 
+/**
+ * `TOperand` where the field, or an element of it when it is an array, is a `TMatch`: Mongo's leaf
+ * operators match an array by any element. Distributes over the field's type, so `undefined` drops out.
+ */
+type LeafOperand<T, TMatch, TOperand> = T extends ReadonlyArray<infer U>
+	? U extends TMatch ? TOperand : never
+	: T extends TMatch ? TOperand : never;
+
 export type ObjFilter<TSchema extends object> =
 	ObjFilterOperators<TSchema> & {
 		[P in DotNotation<TSchema>]?: Condition<DotPathValue<TSchema, P>, true>
 	};
+
+/** `RegExp` where `T` is a string, for the operators that take a regular expression in place of a value. */
+type Pattern<T> = T extends string ? RegExp : never;
